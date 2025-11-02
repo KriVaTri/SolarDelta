@@ -4,7 +4,8 @@ from typing import Any, Optional
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import PERCENTAGE
-from homeassistant.core import State, callback
+from homeassistant.core import State, callback, HomeAssistant
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util, slugify
@@ -24,6 +25,42 @@ def _round_coverage(val: Any) -> float | int:
     if v >= 100.0:
         return 100
     return round(v, 1)
+
+
+class SolarCoverageSensor(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
+    """Current coverage percentage sensor (non-persistent)."""
+
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_icon = "mdi:percent"
+    _attr_has_entity_name = False
+
+    def __init__(self, coordinator: SolarDeltaCoordinator, entry_id: str, display_name: str) -> None:
+        super().__init__(coordinator)
+        self._entry_id = entry_id
+        self._display_name = display_name
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}_coverage"
+        self._current_value: float | int = 0
+
+    @property
+    def name(self) -> str | None:
+        return f"solardelta {self._display_name}"
+
+    @property
+    def native_value(self) -> float | int | None:
+        data = self.coordinator.data or {}
+        cov = data.get("coverage_pct")
+        if cov is None:
+            return None
+        return _round_coverage(cov)
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        return {
+            "identifiers": {(DOMAIN, self._entry_id)},
+            "name": "SolarDelta",
+            "manufacturer": "KriVaTri",
+            "model": "SolarDelta",
+        }
 
 
 class _AvgBase(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
@@ -224,7 +261,7 @@ class SolarCoverageAvgSessionSensor(_AvgBase):
 
         prev = self._last_trigger_norm
 
-        # Keep existing semantics: do NOT reset when previous is None/unknown/unavailable/target,
+        # Do NOT reset when previous is None/unknown/unavailable/target;
         # reset only when moving from some other known state to the target.
         if target_norm and prev not in (None, "unknown", "unavailable", target_norm) and cur_norm == target_norm:
             self._sum_cov_dt = 0.0
@@ -275,3 +312,38 @@ class SolarCoverageAvgLifetimeSensor(_AvgBase):
 
     async def async_reset_avg_lifetime(self) -> None:
         await self._reset_to_zero()
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
+    """Set up SolarDelta sensors for a config entry."""
+    data = hass.data[DOMAIN][entry.entry_id]
+    coordinator: SolarDeltaCoordinator = data["coordinator"]
+    display_name: str = data.get("name") or "SolarDelta"
+    trigger_entity: Optional[str] = data.get("trigger_entity")
+
+    # Core coverage sensor
+    coverage = SolarCoverageSensor(coordinator, entry.entry_id, display_name)
+
+    # Averages
+    avg_session = SolarCoverageAvgSessionSensor(
+        coordinator=coordinator,
+        entry_id=entry.entry_id,
+        display_name=display_name,
+        trigger_entity=trigger_entity,
+    )
+    avg_year = SolarCoverageAvgYearSensor(
+        coordinator=coordinator,
+        entry_id=entry.entry_id,
+        display_name=display_name,
+    )
+    avg_lifetime = SolarCoverageAvgLifetimeSensor(
+        coordinator=coordinator,
+        entry_id=entry.entry_id,
+        display_name=display_name,
+    )
+
+    # Expose references for services
+    data["avg_year_entity"] = avg_year
+    data["avg_lifetime_entity"] = avg_lifetime
+
+    async_add_entities([coverage, avg_session, avg_year, avg_lifetime])
