@@ -75,11 +75,25 @@ class SolarDeltaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return SolarDeltaOptionsFlowHandler(config_entry)
 
 
-class SolarDeltaOptionsFlowHandler(config_entries.OptionsFlow):
+# Use OptionsFlowWithConfigEntry when available to avoid deprecated manual assignment
+try:
+    OptionsFlowBase = config_entries.OptionsFlowWithConfigEntry  # type: ignore[attr-defined]
+except AttributeError:
+    OptionsFlowBase = config_entries.OptionsFlow
+
+
+class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
     """Options flow (name immutable)."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+        # Newer HA: base class accepts config_entry and sets it internally.
+        # Older HA: base class does not accept it; store it after calling super().
+        try:
+            super().__init__(config_entry)  # type: ignore[misc]
+        except TypeError:
+            super().__init__()
+            # Only for older HA versions where this is still the expected pattern.
+            self.config_entry = config_entry  # noqa: SLF001
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
