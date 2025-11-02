@@ -3,7 +3,7 @@
 [![GitHub release (latest SemVer including pre-releases)](https://img.shields.io/github/v/release/KriVaTri/solardelta?include_prereleases)](https://github.com/KriVaTri/solardelta/releases)
 [![Release date](https://img.shields.io/github/release-date/KriVaTri/solardelta?include_prereleases)](https://github.com/KriVaTri/solardelta/releases)
 
-Home Assistant custom integration that compares solar production with a device’s consumption and exposes one percentage sensor per entry:
+Home Assistant custom integration that compares solar production with a device’s consumption and exposes four percentage sensors per entry (coverage + three persistent averages):
 - Coverage percentage: how much of a device’s consumption is currently covered by solar (solar / device * 100), clamped to 0–100%.
 - Rounding: values are shown with 1 decimal, except exact 0% or 100% (no decimals).
 - Negative power values are treated as 0.
