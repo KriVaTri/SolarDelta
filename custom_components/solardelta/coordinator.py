@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+from datetime import timedelta
 from typing import Any, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _norm_str(val: Optional[str]) -> str:
@@ -35,7 +39,14 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         trigger_string_1: Optional[str] = None,
         scan_interval_seconds: int = 0,
     ) -> None:
-        super().__init__(hass, name="solardelta", update_interval=None)
+        interval = (
+            timedelta(seconds=int(scan_interval_seconds))
+            if scan_interval_seconds and int(scan_interval_seconds) > 0
+            else None
+        )
+        # HA DataUpdateCoordinator now requires a logger argument
+        super().__init__(hass, _LOGGER, name="solardelta", update_interval=interval)
+
         self.hass = hass
         self._solar_entity = solar_entity
         self._device_entity = device_entity
@@ -43,13 +54,13 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._status_string = status_string
         self._trigger_entity = trigger_entity
         self._trigger_string_1 = trigger_string_1
-        self._periodic = bool(scan_interval_seconds and scan_interval_seconds > 0)
+        self._periodic = bool(interval is not None)
         self._interval_seconds = int(scan_interval_seconds or 0)
         self._unsub: list[callable] = []
 
     @property
     def trigger_string(self) -> Optional[str]:
-        """Return the configured trigger string (normalized by the sensor as needed)."""
+        """Return the configured trigger string."""
         return self._trigger_string_1
 
     def _conditions_ok(self) -> tuple[bool, bool, bool]:
@@ -70,7 +81,7 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return allowed, status_ok, trigger_ok
 
     async def async_config_entry_first_refresh(self) -> None:
-        # Placeholder: implement initial data load / subscriptions as needed.
+        # Placeholder for initial data load / subscriptions if needed.
         return
 
     async def async_shutdown(self) -> None:
