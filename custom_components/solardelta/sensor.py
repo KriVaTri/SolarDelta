@@ -2,56 +2,73 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import homeassistant.util.dt as dt_util
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import PERCENTAGE
-from homeassistant.core import State, callback, HomeAssistant
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import PERCENTAGE
+from homeassistant.core import State, callback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util, slugify
+from homeassistant.util import slugify
 
 from .const import DOMAIN
-from .coordinator import SolarDeltaCoordinator
+from .coordinator import SolarDeltaCoordinator, _round_coverage
 
 
-def _round_coverage(val: Any) -> float | int:
-    """Round coverage to 1 decimal, except exact 0% or 100%."""
-    try:
-        v = float(val)
-    except (TypeError, ValueError):
-        return 0
-    if v <= 0.0:
-        return 0
-    if v >= 100.0:
-        return 100
-    return round(v, 1)
+async def async_setup_entry(
+    hass, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
+    data = hass.data[DOMAIN][entry.entry_id]
+    coordinator: SolarDeltaCoordinator = data["coordinator"]
+    display_name: str = data.get("name") or "SolarDelta"
+
+    # Core coverage sensor
+    coverage = SolarCoverageSensor(coordinator, entry.entry_id, display_name)
+
+    # Average sensors (persistent)
+    trigger_entity: Optional[str] = data.get("trigger_entity")
+
+    avg_session = SolarCoverageAvgSessionSensor(
+        coordinator=coordinator,
+        entry_id=entry.entry_id,
+        display_name=display_name,
+        trigger_entity=trigger_entity,
+    )
+
+    avg_year = SolarCoverageAvgYearSensor(
+        coordinator=coordinator,
+        entry_id=entry.entry_id,
+        display_name=display_name,
+    )
+
+    avg_lifetime = SolarCoverageAvgLifetimeSensor(
+        coordinator=coordinator,
+        entry_id=entry.entry_id,
+        display_name=display_name,
+    )
+
+    async_add_entities([coverage, avg_session, avg_year, avg_lifetime])
+
+    # Expose references for domain services
+    data["avg_year_entity"] = avg_year
+    data["avg_lifetime_entity"] = avg_lifetime
 
 
 class SolarCoverageSensor(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
-    """Current coverage percentage sensor (non-persistent)."""
-
+    _attr_has_entity_name = False  # we provide the full name
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_icon = "mdi:percent"
-    _attr_has_entity_name = False
 
     def __init__(self, coordinator: SolarDeltaCoordinator, entry_id: str, display_name: str) -> None:
         super().__init__(coordinator)
         self._entry_id = entry_id
         self._display_name = display_name
         self._attr_unique_id = f"{DOMAIN}_{entry_id}_coverage"
-        self._current_value: float | int = 0
 
     @property
     def name(self) -> str | None:
         return f"solardelta {self._display_name}"
-
-    @property
-    def native_value(self) -> float | int | None:
-        data = self.coordinator.data or {}
-        cov = data.get("coverage_pct")
-        if cov is None:
-            return None
-        return _round_coverage(cov)
 
     @property
     def device_info(self) -> dict[str, Any]:
@@ -62,13 +79,18 @@ class SolarCoverageSensor(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity
             "model": "SolarDelta",
         }
 
+    @property
+    def native_value(self) -> float | int | None:
+        value = self.coordinator.data.get("coverage_pct") if self.coordinator.data else None
+        return value
+
 
 class _AvgBase(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
-    """Base class for time-weighted average sensors."""
+    """Persistent time-weighted average sensors with name-based persistence."""
 
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_icon = "mdi:percent"
-    _file_suffix: str  # override in subclasses
+    _file_suffix: str  # override
     _attr_has_entity_name = False
 
     def __init__(self, coordinator: SolarDeltaCoordinator, entry_id: str, display_name: str) -> None:
@@ -81,7 +103,7 @@ class _AvgBase(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
         self._store_key = f"{DOMAIN}_name_{self._name_slug}_{self._file_suffix}.json"
 
         self._sum_cov_dt: float = 0.0  # coverage * seconds
-        self._sum_dt: float = 0.0  # seconds (elapsed active time)
+        self._sum_dt: float = 0.0      # seconds (elapsed active time)
         self._last_ts_utc = dt_util.utcnow()
         self._current_value: float | int = 0
 
@@ -247,23 +269,14 @@ class SolarCoverageAvgSessionSensor(_AvgBase):
         return str(s).strip().lower()
 
     def _maybe_reset_on_update(self, now_utc) -> None:
-        """Reset average when trigger changes from any known non-target state to the configured trigger string."""
+        """Reset average when trigger changes from any known state to 'on'."""
         if not self._trigger_entity:
             return
-
-        # Current normalized trigger state
         cur_state = self.coordinator.hass.states.get(self._trigger_entity)
         cur_norm = self._normalize_state(cur_state)
 
-        # Target: configured trigger string (normalized)
-        target = self.coordinator.trigger_string
-        target_norm = str(target).strip().lower() if target else None
-
         prev = self._last_trigger_norm
-
-        # Do NOT reset when previous is None/unknown/unavailable/target;
-        # reset only when moving from some other known state to the target.
-        if target_norm and prev not in (None, "unknown", "unavailable", target_norm) and cur_norm == target_norm:
+        if prev not in (None, "unknown", "unavailable", "on") and cur_norm == "on":
             self._sum_cov_dt = 0.0
             self._sum_dt = 0.0
             self._current_value = 0
@@ -282,6 +295,14 @@ class SolarCoverageAvgYearSensor(_AvgBase):
     @property
     def name(self) -> str | None:
         return f"solardelta {self._display_name} avg year"
+
+    def _load_extra(self, data: dict) -> None:
+        self._year = data.get("year")
+
+    def _persist_extra(self) -> dict:
+        return {
+            "year": self._year,
+        }
 
     def _pre_update(self, now_utc) -> None:
         now_local = dt_util.now()
@@ -312,38 +333,3 @@ class SolarCoverageAvgLifetimeSensor(_AvgBase):
 
     async def async_reset_avg_lifetime(self) -> None:
         await self._reset_to_zero()
-
-
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
-    """Set up SolarDelta sensors for a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: SolarDeltaCoordinator = data["coordinator"]
-    display_name: str = data.get("name") or "SolarDelta"
-    trigger_entity: Optional[str] = data.get("trigger_entity")
-
-    # Core coverage sensor
-    coverage = SolarCoverageSensor(coordinator, entry.entry_id, display_name)
-
-    # Averages
-    avg_session = SolarCoverageAvgSessionSensor(
-        coordinator=coordinator,
-        entry_id=entry.entry_id,
-        display_name=display_name,
-        trigger_entity=trigger_entity,
-    )
-    avg_year = SolarCoverageAvgYearSensor(
-        coordinator=coordinator,
-        entry_id=entry.entry_id,
-        display_name=display_name,
-    )
-    avg_lifetime = SolarCoverageAvgLifetimeSensor(
-        coordinator=coordinator,
-        entry_id=entry.entry_id,
-        display_name=display_name,
-    )
-
-    # Expose references for services
-    data["avg_year_entity"] = avg_year
-    data["avg_lifetime_entity"] = avg_lifetime
-
-    async_add_entities([coverage, avg_session, avg_year, avg_lifetime])
