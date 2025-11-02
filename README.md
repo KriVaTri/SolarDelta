@@ -1,10 +1,9 @@
 # SolarDelta (this is a beta version and a project in progress)
 
 [![GitHub release (latest SemVer including pre-releases)](https://img.shields.io/github/v/release/KriVaTri/solardelta?include_prereleases)](https://github.com/KriVaTri/solardelta/releases)
-[![Release date](https://img.shields.io/github/release-date/KriVaTri/solardelta?include_prereleases)](https://github.com/KriVaTri/solardelta/releases)
 
 Home Assistant custom integration that compares solar production with a device’s consumption and exposes four percentage sensors per entry (coverage + three persistent averages):
-- Coverage percentage: how much of a device’s consumption is currently covered by solar (solar / device * 100), clamped to 0–100%.
+- Coverage percentage: how much of a device’s consumption is currently covered by solar.
 - Rounding: values are shown with 1 decimal, except exact 0% or 100% (no decimals).
 - Negative power values are treated as 0.
 - Conditions: calculation only occurs when both status and trigger entities match the configured strings.
@@ -27,20 +26,24 @@ Behavior:
 - Units (W vs kW) are normalized automatically.
 
 Average sensors (persistent):
-- solardelta <Name> avg session: time‑weighted average; holds when conditions drop; resets when the trigger goes to “on” from any known state.
+- solardelta <Name> avg session: time‑weighted average; holds when conditions drop; resets when the trigger goes to the first trigger string provided during configuration e.g. "on" from any known state or second trigger string provided by the user.
 - solardelta <Name> avg year: time‑weighted average; holds when conditions drop; auto‑resets on New Year (local time). Also resettable via service solardelta.reset_avg_year.
 - solardelta <Name> avg lifetime: time‑weighted average; holds when conditions drop; never resets. Resettable via service solardelta.reset_avg_lifetime.
+If an entry or the integration has been deleted, reinstalling the integration and/or an entry with the same name, will restore its previous data.
+
+Active duration attribute (on each average sensor):
+- active_time
+What it is: the total elapsed “active” time (in seconds and DD:HH:MM) that contributed to that sensor’s average.
+How it behaves: increases only while conditions are allowed (the same periods used to compute the average), and resets exactly when that average resets (session trigger, New Year, or the relevant reset service).
+What it is not: it’s not wall‑clock time since the sensor was created; periods when conditions aren’t met do not count.
 
 Changing settings later:
 - Use Configure on the integration to change sensors/strings and scan interval.
-- The Name cannot be changed after setup. If you need a different name, delete the entry and create a new one.
-
-Branding:
-- Integration tile/logo: add `icon.png` and `logo.png` in `custom_components/solardelta/` (256×256 PNGs). (yet to be done)
-- Entity icons: percentage sensors use `mdi:percent`.
+- The Name cannot be changed after initial setup. If you need a different name, delete the entry and create a new one or change it's friendly name.
 
 Installation:
-- Copy the `custom_components/solardelta` folder into your Home Assistant config.
+- Through HACS: add a custom repository. (https://github.com/KriVaTri/solardelta)
+- Or copy the `custom_components/solardelta` folder into your Home Assistant config.
 - Restart Home Assistant.
 - Settings → Devices & Services → “Add Integration” → SolarDelta.
 
