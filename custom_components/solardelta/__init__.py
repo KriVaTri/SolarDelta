@@ -17,9 +17,9 @@ from .const import (
     CONF_STATUS_STRING,
     CONF_TRIGGER_ENTITY,
     CONF_TRIGGER_STRING_1,
+    CONF_TRIGGER_STRING_2,
 )
 from .coordinator import SolarDeltaCoordinator
-
 
 # This integration is configured via config entries only (no YAML)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -39,7 +39,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             else:
                 yield entity
 
-    async def _handle_reset_year(call: ServiceCall) -> None:
+    async def _handle_reset_year(call: ServiceCall):
         entity_ids = call.data.get("entity_id")
         if isinstance(entity_ids, str):
             entity_ids = [entity_ids]
@@ -47,7 +47,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             if hasattr(ent, "async_reset_avg_year"):
                 await ent.async_reset_avg_year()
 
-    async def _handle_reset_lifetime(call: ServiceCall) -> None:
+    async def _handle_reset_lifetime(call: ServiceCall):
         entity_ids = call.data.get("entity_id")
         if isinstance(entity_ids, str):
             entity_ids = [entity_ids]
@@ -89,6 +89,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     status_string = entry.options.get(CONF_STATUS_STRING) or entry.data.get(CONF_STATUS_STRING)
     trigger_entity = entry.options.get(CONF_TRIGGER_ENTITY) or entry.data.get(CONF_TRIGGER_ENTITY)
     trigger_string_1 = entry.options.get(CONF_TRIGGER_STRING_1) or entry.data.get(CONF_TRIGGER_STRING_1)
+    trigger_string_2 = entry.options.get(CONF_TRIGGER_STRING_2) or entry.data.get(CONF_TRIGGER_STRING_2)
 
     scan_interval = entry.options.get(CONF_SCAN_INTERVAL)
     if scan_interval is None:
@@ -102,19 +103,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         status_string=status_string,
         trigger_entity=trigger_entity,
         trigger_string_1=trigger_string_1,
+        trigger_string_2=trigger_string_2,
         scan_interval_seconds=int(scan_interval or 0),
     )
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
-        "name": entry_name,
         "coordinator": coordinator,
-        "trigger_entity": trigger_entity,  # ensure session sensor can monitor trigger
+        "name": entry_name,
+        "status_entity": status_entity,
+        "status_string": status_string,
+        "trigger_entity": trigger_entity,
+        "trigger_string_1": trigger_string_1,
+        "trigger_string_2": trigger_string_2,
+        "scan_interval": scan_interval,
+        "avg_year_entity": None,
+        "avg_lifetime_entity": None,
     }
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_update_listener))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
