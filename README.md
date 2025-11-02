@@ -10,7 +10,7 @@ Home Assistant custom integration that compares solar production with a device�
 - This integration is mainly focused on EV charging consumption, but can be used for other devices. In case of EV charging, the status sensor would be the charging status of the EV or wallbox, this string is usually "charging". The trigger sensor can be a sensor detecting if the vehicle is connected to the wallbox, this string is usually "on". These strings can be anything but they are case sensitive and must match the sensor or binary_sensor status string exactly. If no trigger sensor exist, the status sensor and its string can be used instead.
 
 Configuration (via UI):
-- Name: a custom label for this entry; the entity will be named “solardelta '<Name>'”.
+- Name: a custom label for this entry; the entity will be named “solardelta {name}”.
 - Solar sensor: select your solar production sensor (sensor).
 - Device sensor: select your device consumption sensor (sensor).
 - Status entity: an entity (sensor or binary_sensor) representing the device status.
