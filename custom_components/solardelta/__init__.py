@@ -18,6 +18,7 @@ from .const import (
     CONF_TRIGGER_ENTITY,
     CONF_TRIGGER_STRING_1,
     CONF_TRIGGER_STRING_2,
+    CONF_TRIGGER_BLOCK,  # NEW
 )
 from .coordinator import SolarDeltaCoordinator
 
@@ -75,6 +76,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SolarDelta from a config entry."""
+
     entry_name = entry.data.get(CONF_NAME) or entry.title or "SolarDelta"
     solar_entity = entry.options.get(CONF_SOLAR_ENTITY) or entry.data.get(CONF_SOLAR_ENTITY)
 
@@ -90,6 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     trigger_entity = entry.options.get(CONF_TRIGGER_ENTITY) or entry.data.get(CONF_TRIGGER_ENTITY)
     trigger_string_1 = entry.options.get(CONF_TRIGGER_STRING_1) or entry.data.get(CONF_TRIGGER_STRING_1)
     trigger_string_2 = entry.options.get(CONF_TRIGGER_STRING_2) or entry.data.get(CONF_TRIGGER_STRING_2)
+    trigger_block = entry.options.get(CONF_TRIGGER_BLOCK) or entry.data.get(CONF_TRIGGER_BLOCK)  # NEW
 
     scan_interval = entry.options.get(CONF_SCAN_INTERVAL)
     if scan_interval is None:
@@ -104,6 +107,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         trigger_entity=trigger_entity,
         trigger_string_1=trigger_string_1,
         trigger_string_2=trigger_string_2,
+        trigger_block=trigger_block,  # NEW
         scan_interval_seconds=int(scan_interval or 0),
     )
     await coordinator.async_config_entry_first_refresh()
@@ -117,6 +121,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "trigger_entity": trigger_entity,
         "trigger_string_1": trigger_string_1,
         "trigger_string_2": trigger_string_2,
+        "trigger_block": trigger_block,  # NEW
         "scan_interval": scan_interval,
         "avg_year_entity": None,
         "avg_lifetime_entity": None,
