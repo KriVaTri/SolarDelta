@@ -15,19 +15,24 @@ from .const import (
     CONF_STATUS_STRING,
     CONF_TRIGGER_ENTITY,
     CONF_TRIGGER_STRING_1,
+    CONF_TRIGGER_STRING_2,
     CONF_DEVICE_ENTITIES,
 )
 
+
 def _norm(s: str | None) -> str:
-    return (s or "").strip().lower()
+    return (s or "").strip().casefold()
+
 
 def _existing_names(entries: list[config_entries.ConfigEntry], exclude_entry_id: str | None = None) -> set[str]:
-    names = set()
+    names: set[str] = set()
     for e in entries:
         if exclude_entry_id and e.entry_id == exclude_entry_id:
             continue
-        names.add(_norm(e.data.get(CONF_NAME) or e.title or "SolarDelta"))
+        nm = e.options.get(CONF_NAME) or e.data.get(CONF_NAME) or e.title or ""
+        names.add(_norm(nm))
     return names
+
 
 def _build_user_schema() -> vol.Schema:
     entity_selector = {"entity": {"domain": ["sensor", "binary_sensor"]}}
@@ -40,11 +45,13 @@ def _build_user_schema() -> vol.Schema:
             vol.Required(CONF_STATUS_STRING): str,
             vol.Required(CONF_TRIGGER_ENTITY): selector(entity_selector),
             vol.Required(CONF_TRIGGER_STRING_1): str,
+            vol.Optional(CONF_TRIGGER_STRING_2): str,
             vol.Required(CONF_SCAN_INTERVAL, default=0): selector(
                 {"number": {"min": 0, "max": 86400, "step": 1, "mode": "box", "unit_of_measurement": "s"}}
             ),
         }
     )
+
 
 class SolarDeltaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -68,6 +75,7 @@ class SolarDeltaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry):
         return SolarDeltaOptionsFlowHandler(config_entry)
+
 
 class SolarDeltaOptionsFlowHandler(config_entries.OptionsFlow):
     """Options flow (name immutable)."""
@@ -110,6 +118,7 @@ class SolarDeltaOptionsFlowHandler(config_entries.OptionsFlow):
         cur_status_string = get_opt(CONF_STATUS_STRING) or get_dat(CONF_STATUS_STRING) or ""
         cur_trigger_entity = get_opt(CONF_TRIGGER_ENTITY) or get_dat(CONF_TRIGGER_ENTITY)
         cur_trigger_str1 = get_opt(CONF_TRIGGER_STRING_1) or get_dat(CONF_TRIGGER_STRING_1) or ""
+        cur_trigger_str2 = get_opt(CONF_TRIGGER_STRING_2) or get_dat(CONF_TRIGGER_STRING_2) or ""
         cur_scan = get_opt(CONF_SCAN_INTERVAL)
         if cur_scan is None:
             cur_scan = get_dat(CONF_SCAN_INTERVAL)
@@ -147,6 +156,11 @@ class SolarDeltaOptionsFlowHandler(config_entries.OptionsFlow):
             schema_fields[vol.Required(CONF_TRIGGER_ENTITY)] = selector(entity_selector)
 
         schema_fields[vol.Required(CONF_TRIGGER_STRING_1, default=cur_trigger_str1)] = str
+
+        if cur_trigger_str2:
+            schema_fields[vol.Optional(CONF_TRIGGER_STRING_2, default=cur_trigger_str2)] = str
+        else:
+            schema_fields[vol.Optional(CONF_TRIGGER_STRING_2)] = str
 
         schema_fields[vol.Required(CONF_SCAN_INTERVAL, default=cur_scan)] = selector(
             {"number": {"min": 0, "max": 86400, "step": 1, "mode": "box", "unit_of_measurement": "s"}}
