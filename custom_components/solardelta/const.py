@@ -14,5 +14,3 @@ CONF_STATUS_ENTITY = "status_entity"
 CONF_STATUS_STRING = "status_string"
 CONF_TRIGGER_ENTITY = "trigger_entity"
 CONF_TRIGGER_STRING_1 = "trigger_string_1"
-CONF_TRIGGER_STRING_2 = "trigger_string_2"
-CONF_TRIGGER_BLOCK = "trigger_block"  # NEW: comma-separated blocked trigger states
