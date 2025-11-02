@@ -95,6 +95,7 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         trigger_entity: Optional[str] = None,
         trigger_string_1: Optional[str] = None,
         trigger_string_2: Optional[str] = None,
+        trigger_block: Optional[str] = None,  # NEW: comma-separated blocked values
         scan_interval_seconds: int = 0,
     ) -> None:
         periodic = scan_interval_seconds and scan_interval_seconds > 0
@@ -111,6 +112,7 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._trigger_entity = trigger_entity
         self._trigger_string_1 = trigger_string_1
         self._trigger_string_2 = trigger_string_2
+        self._trigger_block = trigger_block  # NEW (raw string)
         self._periodic = bool(periodic)
         self._unsub: list[callable] = []
 
@@ -126,12 +128,25 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         trigger_ok = True
         if self._trigger_entity:
             trigger_state = self.hass.states.get(self._trigger_entity)
-            triggers: list[str] = []
+
+            # Allowed list
+            triggers_allowed: list[str] = []
             if self._trigger_string_1:
-                triggers.append(self._trigger_string_1)
+                triggers_allowed.append(self._trigger_string_1)
             if self._trigger_string_2:
-                triggers.append(self._trigger_string_2)
-            trigger_ok = _state_matches(trigger_state, triggers)
+                triggers_allowed.append(self._trigger_string_2)
+
+            # NEW: Blocked list (comma-separated string -> list)
+            blocked: list[str] = []
+            if self._trigger_block:
+                blocked = [part.strip() for part in str(self._trigger_block).split(",") if part.strip()]
+
+            # If blocked matches, trigger fails immediately
+            if blocked and _state_matches(trigger_state, blocked):
+                trigger_ok = False
+            else:
+                # Otherwise require allowed match (empty allowed means True)
+                trigger_ok = _state_matches(trigger_state, triggers_allowed)
 
         allowed = status_ok and trigger_ok
         return allowed, status_ok, trigger_ok
@@ -162,15 +177,6 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "trigger_ok": trigger_ok,
         }
 
-    async def _async_update_data(self) -> dict[str, Any]:
-        """Provide data for scheduled refreshes and initial refresh."""
-        return self._compute_now()
-
-    async def async_config_entry_first_refresh(self) -> None:
-        """Initialize data and set up subscriptions based on mode."""
-        await super().async_config_entry_first_refresh()
-        self._setup_subscriptions()
-
     def _setup_subscriptions(self) -> None:
         # Clear any previous subscriptions
         for unsub in self._unsub:
@@ -197,11 +203,3 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entity_ids.append(self._trigger_entity)
 
         self._unsub.append(async_track_state_change_event(self.hass, entity_ids, _state_changed))
-
-    async def async_shutdown(self) -> None:
-        for unsub in self._unsub:
-            try:
-                unsub()
-            except Exception:  # pragma: no cover
-                pass
-        self._unsub.clear()
