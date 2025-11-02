@@ -16,7 +16,7 @@ Configuration (via UI):
 - Status entity: an entity (sensor or binary_sensor) representing the device status.
 - Status match: a string to match against the status entity’s state (case-insensitive).
 - Trigger entity: an entity (sensor or binary_sensor) to trigger on.
-- Trigger match: required string to match against the trigger entity’s state (case-insensitive).
+- Trigger match: a string to match against the trigger entity’s state (case-insensitive).
 - Scan interval (seconds): 0 = disabled (push-only updates); >0 adds periodic recalculation at the given interval.
 
 Behavior:
