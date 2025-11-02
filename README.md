@@ -38,7 +38,7 @@ Active duration attributes (on each average sensor):
 
 Changing settings later:
 - Use Configure on the integration to change sensors/strings and scan interval.
-- The Name cannot be changed after initial setup. If you need a different name, delete the entry and create a new one, or change its friendly name.
+- The Name cannot be changed after initial setup. If you need a different name, delete the entry and create a new one or change its friendly name if you need to keep its stored data.
 
 Installation:
 - Through HACS: add a custom repository. (https://github.com/KriVaTri/solardelta)
