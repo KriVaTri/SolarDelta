@@ -28,8 +28,8 @@
         "title": "SolarDelta options",
         "description": "Change sensors/strings and scan interval for:\n{entry_name}",
         "data": {
-          "solar_entity": "Solar sensor",
-          "device_entity": "Device sensor",
+          "solar_entity": "Solar power sensor",
+          "device_entity": "Device power sensor",
           "status_entity": "Status entity (sensor or binary_sensor)",
           "status_string": "Status match (string)",
           "trigger_entity": "Trigger entity (sensor or binary_sensor)",
