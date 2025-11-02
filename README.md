@@ -26,7 +26,7 @@ Behavior:
 - Units (W vs kW) are normalized automatically.
 
 Average sensors (persistent):
-- solardelta {name} avg session: time‑weighted average; holds when conditions drop; resets when the trigger changes from any known state to the trigger sensor string (provided during configuration) e.g. "on".
+- solardelta {name} avg session: time‑weighted average; holds when conditions drop; resets when the trigger changes from any known state to the trigger sensor state (string provided during configuration) e.g. "on".
 - solardelta {name} avg year: time‑weighted average; holds when conditions drop; auto‑resets on New Year (local time). Also resettable via service solardelta.reset_avg_year.
 - solardelta {name} avg lifetime: time‑weighted average; holds when conditions drop; never resets. Resettable via service solardelta.reset_avg_lifetime.
 - If an entry or the integration has been deleted, reinstalling the integration or creating an entry with the same name will restore its previous data.
