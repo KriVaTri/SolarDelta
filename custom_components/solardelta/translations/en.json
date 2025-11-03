@@ -7,10 +7,10 @@
         "description": "Choose a name and select your sensors.",
         "data": {
           "name": "Name",
-          "solar_entity": "Solar sensor",
-          "device_entity": "Device sensor",
+          "solar_entity": "Solar power sensor",
+          "device_entity": "Device power sensor",
           "status_entity": "Status entity (sensor or binary_sensor)",
-          "status_string": "Status match (string)",
+          "status_string": "Status match (string, 'none' = disabled)",
           "reset_entity": "Reset entity (sensor or binary_sensor)",
           "reset_string": "Reset match (string)",
           "scan_interval": "Scan interval (seconds, 0 = disabled)"
@@ -30,7 +30,7 @@
           "solar_entity": "Solar power sensor",
           "device_entity": "Device power sensor",
           "status_entity": "Status entity (sensor or binary_sensor)",
-          "status_string": "Status match (string)",
+          "status_string": "Status match (string, 'none' = disabled)",
           "reset_entity": "Reset entity (sensor or binary_sensor)",
           "reset_string": "Reset match (string)",
           "scan_interval": "Scan interval (seconds, 0 = disabled)"
