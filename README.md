@@ -6,8 +6,8 @@ Home Assistant custom integration that compares solar production with a device�
 - Coverage percentage: how much of a device’s consumption is currently covered by solar.
 - Rounding: values are shown with 1 decimal, except exact 0% or 100% (no decimals).
 - Negative power values are treated as 0.
-- Conditions: calculation only occurs when both status and trigger entities match the configured strings.
-- This integration is mainly focused on EV charging consumption, but can be used for other devices. In case of EV charging, the status sensor would be the charging status of the EV or wallbox, this string is usually "charging". The trigger sensor can be a sensor detecting if the vehicle is connected to the wallbox, this string is usually "on". These strings can be anything (they are not case sensitive) but must match the sensor or binary_sensor status string exactly. If no trigger sensor exist, the status sensor and its string can be used instead.
+- Conditions: calculation only occurs when status device = the string provided by the user (not case-sensitive) and device power consumption > 0.
+- This integration is mainly focused on EV charging consumption, but can be used for other devices. In case of EV charging, the status sensor would be the charging status of the EV or wallbox, this string is usually "charging". The reset sensor can be a sensor detecting if the vehicle is getting plugged in to the wallbox, this string is usually "on". These strings can be anything (they are not case sensitive) but must match the sensor or binary_sensor status string exactly. If no trigger sensor exist, the status sensor and its string can be used instead.
 
 Configuration (via UI):
 - Name: a custom label for this entry; the entity will be named “solardelta {name}”.
