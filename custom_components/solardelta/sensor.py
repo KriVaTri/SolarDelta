@@ -226,23 +226,23 @@ class SolarCoverageAvgSessionSensor(_AvgBase):
         coordinator: SolarDeltaCoordinator,
         entry_id: str,
         display_name: str,
-        trigger_entity: Optional[str],
+        reset_entity: Optional[str],
     ) -> None:
         super().__init__(coordinator, entry_id, display_name)
         self._attr_unique_id = f"{DOMAIN}_{entry_id}_avg_session"
-        self._trigger_entity = trigger_entity
-        self._last_trigger_norm: Optional[str] = None
+        self._reset_entity = reset_entity
+        self._last_reset_norm: Optional[str] = None
 
     @property
     def name(self) -> str | None:
         return f"solardelta {self._display_name} avg session"
 
     def _load_extra(self, data: dict) -> None:
-        self._last_trigger_norm = data.get("last_trigger_norm")
+        self._last_reset_norm = data.get("last_reset_norm")
 
     def _persist_extra(self) -> dict:
         return {
-            "last_trigger_norm": self._last_trigger_norm,
+            "last_reset_norm": self._last_reset_norm,
         }
 
     def _normalize_state(self, st: Optional[State]) -> Optional[str]:
@@ -254,19 +254,19 @@ class SolarCoverageAvgSessionSensor(_AvgBase):
         return str(s).strip().lower()
 
     def _maybe_reset_on_update(self, now_utc) -> None:
-        """Reset average when trigger changes from any known non-target state to the configured trigger string."""
-        if not self._trigger_entity:
+        """Reset average when reset sensor changes from any known non-target state to the configured reset string."""
+        if not self._reset_entity:
             return
 
-        # Current normalized trigger state
-        cur_state = self.coordinator.hass.states.get(self._trigger_entity)
+        # Current normalized reset state
+        cur_state = self.coordinator.hass.states.get(self._reset_entity)
         cur_norm = self._normalize_state(cur_state)
 
-        # Target: configured trigger string (normalized)
-        target = self.coordinator.trigger_string
+        # Target: configured reset string (normalized)
+        target = self.coordinator.reset_string
         target_norm = str(target).strip().lower() if target else None
 
-        prev = self._last_trigger_norm
+        prev = self._last_reset_norm
 
         # Do NOT reset when previous is None/unknown/unavailable/target;
         # reset only when moving from some other known state to the target.
@@ -275,7 +275,11 @@ class SolarCoverageAvgSessionSensor(_AvgBase):
             self._sum_dt = 0.0
             self._current_value = 0
 
-        self._last_trigger_norm = cur_norm
+        self._last_reset_norm = cur_norm
+
+    async def async_reset_avg_session(self) -> None:
+        """Service handler to reset session average to 0."""
+        await self._reset_to_zero()
 
 
 class SolarCoverageAvgYearSensor(_AvgBase):
@@ -326,7 +330,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: SolarDeltaCoordinator = data["coordinator"]
     display_name: str = data.get("name") or "SolarDelta"
-    trigger_entity: Optional[str] = data.get("trigger_entity")
+    reset_entity: Optional[str] = data.get("reset_entity")
 
     # Core coverage sensor
     coverage = SolarCoverageSensor(coordinator, entry.entry_id, display_name)
@@ -336,7 +340,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         coordinator=coordinator,
         entry_id=entry.entry_id,
         display_name=display_name,
-        trigger_entity=trigger_entity,
+        reset_entity=reset_entity,
     )
     avg_year = SolarCoverageAvgYearSensor(
         coordinator=coordinator,
@@ -350,6 +354,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
 
     # Expose references for services
+    data["avg_session_entity"] = avg_session
     data["avg_year_entity"] = avg_year
     data["avg_lifetime_entity"] = avg_lifetime
 
