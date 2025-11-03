@@ -11,8 +11,8 @@
           "device_entity": "Device sensor",
           "status_entity": "Status entity (sensor or binary_sensor)",
           "status_string": "Status match (string)",
-          "trigger_entity": "Trigger entity (sensor or binary_sensor)",
-          "trigger_string_1": "Trigger match (string)",
+          "reset_entity": "Reset entity (sensor or binary_sensor)",
+          "reset_string": "Reset match (string)",
           "scan_interval": "Scan interval (seconds, 0 = disabled)"
         }
       }
@@ -31,8 +31,8 @@
           "device_entity": "Device power sensor",
           "status_entity": "Status entity (sensor or binary_sensor)",
           "status_string": "Status match (string)",
-          "trigger_entity": "Trigger entity (sensor or binary_sensor)",
-          "trigger_string_1": "Trigger match (string)",
+          "reset_entity": "Reset entity (sensor or binary_sensor)",
+          "reset_string": "Reset match (string)",
           "scan_interval": "Scan interval (seconds, 0 = disabled)"
         }
       }
