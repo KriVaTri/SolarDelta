@@ -13,9 +13,11 @@ from .const import (
     CONF_NAME,
     CONF_STATUS_ENTITY,
     CONF_STATUS_STRING,
-    CONF_TRIGGER_ENTITY,
-    CONF_TRIGGER_STRING_1,
+    CONF_RESET_ENTITY,
+    CONF_RESET_STRING,
     CONF_DEVICE_ENTITIES,
+    LEGACY_CONF_TRIGGER_ENTITY,
+    LEGACY_CONF_TRIGGER_STRING_1,
 )
 
 
@@ -42,8 +44,8 @@ def _build_user_schema() -> vol.Schema:
             vol.Required(CONF_DEVICE_ENTITY): selector({"entity": {"domain": "sensor"}}),
             vol.Required(CONF_STATUS_ENTITY): selector(entity_selector),
             vol.Required(CONF_STATUS_STRING): str,
-            vol.Required(CONF_TRIGGER_ENTITY): selector(entity_selector),
-            vol.Required(CONF_TRIGGER_STRING_1): str,
+            vol.Required(CONF_RESET_ENTITY): selector(entity_selector),
+            vol.Required(CONF_RESET_STRING): str,
             vol.Required(CONF_SCAN_INTERVAL, default=0): selector(
                 {"number": {"min": 0, "max": 86400, "step": 1, "mode": "box", "unit_of_measurement": "s"}}
             ),
@@ -128,8 +130,22 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
 
         cur_status_entity = get_opt(CONF_STATUS_ENTITY) or get_dat(CONF_STATUS_ENTITY)
         cur_status_string = get_opt(CONF_STATUS_STRING) or get_dat(CONF_STATUS_STRING) or ""
-        cur_trigger_entity = get_opt(CONF_TRIGGER_ENTITY) or get_dat(CONF_TRIGGER_ENTITY)
-        cur_trigger_str1 = get_opt(CONF_TRIGGER_STRING_1) or get_dat(CONF_TRIGGER_STRING_1) or ""
+
+        # New reset fields with legacy fallback to trigger_*
+        cur_reset_entity = (
+            get_opt(CONF_RESET_ENTITY)
+            or get_dat(CONF_RESET_ENTITY)
+            or get_opt(LEGACY_CONF_TRIGGER_ENTITY)
+            or get_dat(LEGACY_CONF_TRIGGER_ENTITY)
+        )
+        cur_reset_string = (
+            get_opt(CONF_RESET_STRING)
+            or get_dat(CONF_RESET_STRING)
+            or get_opt(LEGACY_CONF_TRIGGER_STRING_1)
+            or get_dat(LEGACY_CONF_TRIGGER_STRING_1)
+            or ""
+        )
+
         cur_scan = get_opt(CONF_SCAN_INTERVAL)
         if cur_scan is None:
             cur_scan = get_dat(CONF_SCAN_INTERVAL)
@@ -161,12 +177,12 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
 
         schema_fields[vol.Required(CONF_STATUS_STRING, default=cur_status_string)] = str
 
-        if cur_trigger_entity is not None:
-            schema_fields[vol.Required(CONF_TRIGGER_ENTITY, default=cur_trigger_entity)] = selector(entity_selector)
+        if cur_reset_entity is not None:
+            schema_fields[vol.Required(CONF_RESET_ENTITY, default=cur_reset_entity)] = selector(entity_selector)
         else:
-            schema_fields[vol.Required(CONF_TRIGGER_ENTITY)] = selector(entity_selector)
+            schema_fields[vol.Required(CONF_RESET_ENTITY)] = selector(entity_selector)
 
-        schema_fields[vol.Required(CONF_TRIGGER_STRING_1, default=cur_trigger_str1)] = str
+        schema_fields[vol.Required(CONF_RESET_STRING, default=cur_reset_string)] = str
 
         schema_fields[vol.Required(CONF_SCAN_INTERVAL, default=cur_scan)] = selector(
             {"number": {"min": 0, "max": 86400, "step": 1, "mode": "box", "unit_of_measurement": "s"}}
