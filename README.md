@@ -1,5 +1,5 @@
 
-# SolarDelta (this is a beta version) <img width="50" height="50" alt="icon" src="https://github.com/user-attachments/assets/2d4964a3-cef0-492d-ba09-0cf393341266" />  
+# SolarDelta (this is a beta version)
 
 [![GitHub release (latest SemVer including pre-releases)](https://img.shields.io/github/v/release/KriVaTri/solardelta?include_prereleases)](https://github.com/KriVaTri/solardelta/releases)
 
