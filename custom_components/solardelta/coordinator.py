@@ -53,8 +53,8 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         device_entity: str,
         status_entity: Optional[str] = None,
         status_string: Optional[str] = None,
-        trigger_entity: Optional[str] = None,
-        trigger_string_1: Optional[str] = None,
+        reset_entity: Optional[str] = None,
+        reset_string: Optional[str] = None,
         scan_interval_seconds: int = 0,
     ) -> None:
         periodic = bool(scan_interval_seconds and int(scan_interval_seconds) > 0)
@@ -68,8 +68,8 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._device_entity = device_entity
         self._status_entity = status_entity
         self._status_string = status_string
-        self._trigger_entity = trigger_entity
-        self._trigger_string_1 = trigger_string_1
+        self._reset_entity = reset_entity
+        self._reset_string = reset_string
 
         self._periodic = periodic
         self._unsub: list[callable] = []
@@ -79,33 +79,50 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "coverage_pct": 0.0,
             "conditions_allowed": False,
             "status_ok": True,
-            "trigger_ok": True,
+            "reset_ok": True,
         }
 
     @property
-    def trigger_string(self) -> Optional[str]:
-        """Return the configured trigger string (single)."""
-        return self._trigger_string_1
+    def reset_string(self) -> Optional[str]:
+        """Return the configured reset string (single)."""
+        return self._reset_string
 
     def _conditions_ok(self) -> tuple[bool, bool, bool]:
-        """Return (allowed, status_ok, trigger_ok)."""
-        status_ok = True
-        if self._status_entity:
-            status_state = self.hass.states.get(self._status_entity)
-            status_ok = _state_matches(status_state, [self._status_string] if self._status_string else [])
+        """Return (allowed_by_status_only, status_ok, reset_ok).
 
-        trigger_ok = True
-        if self._trigger_entity:
-            trigger_state = self.hass.states.get(self._trigger_entity)
-            triggers: list[str] = [self._trigger_string_1] if self._trigger_string_1 else []
-            trigger_ok = _state_matches(trigger_state, triggers)
+        Rules:
+        - If status_string == "none" (case-insensitive), ignore status entity; status_ok = True.
+        - Otherwise, status_ok matches status_entity/state against status_string (if entity provided).
+        - Reset sensor is observed (for session resets) but does NOT gate calculations.
+        """
+        # Handle "none" status string: ignore status checks entirely
+        status_string_norm = _norm_str(self._status_string)
+        none_status = status_string_norm == "none"
 
-        allowed = status_ok and trigger_ok
-        return allowed, status_ok, trigger_ok
+        if none_status:
+            status_ok = True
+        else:
+            status_ok = True
+            if self._status_entity:
+                status_state = self.hass.states.get(self._status_entity)
+                status_ok = _state_matches(status_state, [self._status_string] if self._status_string else [])
+
+        reset_ok = True
+        if self._reset_entity:
+            reset_state = self.hass.states.get(self._reset_entity)
+            resets: list[str] = [self._reset_string] if self._reset_string else []
+            reset_ok = _state_matches(reset_state, resets)
+
+        # If status is "none", allow by status unconditionally; else depend on status_ok
+        allowed_by_status_only = True if none_status else status_ok
+        return allowed_by_status_only, status_ok, reset_ok
 
     def _compute_now(self) -> dict[str, Any]:
-        """Compute coverage from current states, honoring conditions."""
-        allowed, status_ok, trigger_ok = self._conditions_ok()
+        """Compute coverage from current states, honoring conditions:
+        - If status_string == "none": only require device power > 0.
+        - Else: status must match (if configured) AND device power > 0.
+        """
+        allowed_by_status, status_ok, reset_ok = self._conditions_ok()
 
         solar_state = self.hass.states.get(self._solar_entity)
         device_state = self.hass.states.get(self._device_entity)
@@ -113,9 +130,15 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         solar_w = _to_watts(solar_state)
         device_w = _to_watts(device_state)
 
+        # Device sensor must be > 0 to allow calculations/accumulation
+        device_positive = device_w is not None and device_w > 0.0
+
+        allowed = bool(allowed_by_status and device_positive)
+
         if not allowed:
             pct: float | int = 0
         elif solar_w is None or device_w is None or device_w <= 0:
+            # Redundant guard; kept for safety
             pct = 0
         else:
             pct = (solar_w / device_w) * 100.0
@@ -131,7 +154,7 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "coverage_pct": float(pct),
             "conditions_allowed": allowed,
             "status_ok": status_ok,
-            "trigger_ok": trigger_ok,
+            "reset_ok": reset_ok,
         }
 
     def _publish_now(self) -> None:
@@ -151,16 +174,16 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_config_entry_first_refresh(self) -> None:
         """Set up listeners and perform initial refresh."""
-
         # When periodic updates are configured (scan_interval > 0), do not subscribe to
         # state changes; rely on the DataUpdateCoordinator schedule only.
         # When scan_interval == 0, operate in event-driven mode and recompute on changes.
-        watch = [self._solar_entity, self._device_entity, self._status_entity, self._trigger_entity]
+        # Keep reset_entity in watch so session average can observe changes and reset timely.
+        watch = [self._solar_entity, self._device_entity, self._status_entity, self._reset_entity]
         watch = [e for e in watch if e]
 
         if not self._periodic and watch:
             def _on_change(event):
-                # Any relevant state change triggers recompute
+                # Any relevant state change triggers recompute (and notifies sensors)
                 self._publish_now()
 
             unsub = async_track_state_change_event(self.hass, watch, _on_change)
