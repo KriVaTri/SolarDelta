@@ -50,7 +50,7 @@ class SolarCoverageSensor(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity
 
     @property
     def name(self) -> str | None:
-        return f"solardelta {self._display_name}"
+        return f"solardelta {self._display_name} coverage"
 
     @property
     def native_value(self) -> float | int | None:
