@@ -128,7 +128,7 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Return the configured reset string (single)."""
         return self._reset_string
 
-    def _conditions_ok(self) -> tuple[bool, bool, bool]:
+    def _conditions_ok(self) -> tuple[bool, bool, bool]:  # noqa: PLR0912
         """Return (allowed_by_status_only, status_ok, reset_ok).
 
         Rules:
