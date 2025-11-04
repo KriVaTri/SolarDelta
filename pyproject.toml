@@ -4,24 +4,14 @@ target-version = "py312"
 
 [tool.ruff.lint]
 # Core rule families:
-# E,F,W -> pycodestyle/pyflakes warnings & errors
-# I     -> import sorting
-# B     -> flake8-bugbear
-# UP    -> pyupgrade
-# SIM   -> flake8-simplify
-# PL    -> pylint-ish checks (subset)
-# RUF   -> ruff-specific rules
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "PL", "RUF"]
+ignore = ["D", "ANN"]  # no docstring/annotation style enforcement
 
-# Project-level ignores. (Keep narrow; use per-file ignores where possible.)
-# - D*: docstring rules (not enforced here)
-# - ANN*: type annotation style (not enforced)
-ignore = ["D", "ANN"]
-
-# File-specific ignores for known patterns in this repo
 [tool.ruff.lint.per-file-ignores]
-# Accessing a private attribute is intentional for HA OptionsFlow back-compat.
-"custom_components/solardelta/config_flow.py" = ["SLF001"]
+# config flow complexity and branching are acceptable
+"custom_components/solardelta/config_flow.py" = ["PLR0912", "PLR0915"]
+# Coordinator has long signature and some branching that is intentional
+"custom_components/solardelta/coordinator.py" = ["PLR0912", "PLR0913"]
 
 [tool.ruff.format]
 quote-style = "double"
