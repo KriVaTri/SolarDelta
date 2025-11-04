@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import Iterable
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL
@@ -28,9 +29,50 @@ from .coordinator import SolarDeltaCoordinator
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+# Fixed service names (hassfest-friendly)
+SVC_RESET_SESSION = "reset_avg_session"
+SVC_RESET_YEAR = "reset_avg_year"
+SVC_RESET_LIFETIME = "reset_avg_lifetime"
+SVC_RESET_SESSION_GRID = "reset_avg_session_grid"
+SVC_RESET_YEAR_GRID = "reset_avg_year_grid"
+SVC_RESET_LIFETIME_GRID = "reset_avg_lifetime_grid"
+SVC_RESET_ALL = "reset_all_averages"
+
+_ALL_SERVICES: tuple[str, ...] = (
+    SVC_RESET_SESSION,
+    SVC_RESET_YEAR,
+    SVC_RESET_LIFETIME,
+    SVC_RESET_SESSION_GRID,
+    SVC_RESET_YEAR_GRID,
+    SVC_RESET_LIFETIME_GRID,
+    SVC_RESET_ALL,
+)
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
+
+
+def _iter_entry_data(hass: HomeAssistant) -> Iterable[tuple[str, dict]]:
+    for key, data in (hass.data.get(DOMAIN) or {}).items():
+        # Skip internal flags (underscored keys)
+        if key.startswith("_"):
+            continue
+        if isinstance(data, dict):
+            yield key, data
+
+
+def _find_entry_id(hass: HomeAssistant, *, entry_id: str | None, name: str | None) -> str | None:
+    """Resolve which entry to operate on using entry_id or name."""
+    if entry_id:
+        return entry_id if entry_id in (hass.data.get(DOMAIN) or {}) else None
+    if name:
+        name_norm = (name or "").strip().casefold()
+        for eid, data in _iter_entry_data(hass):
+            display = (data.get("name") or "").strip().casefold()
+            if display == name_norm:
+                return eid
+    return None
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -82,31 +124,52 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "name": entry_name,
         "status_entity": status_entity,
         "reset_entity": reset_entity,
-        "per_entry_services": [],
     }
 
-    suffix = slugify(entry_name).lower() or slugify(entry.entry_id).lower()
+    # One-time global service registration (fixed names, hassfest-friendly)
+    if not hass.data[DOMAIN].get("_services_registered"):
+        hass.services.async_register(DOMAIN, SVC_RESET_SESSION, _handle_reset_session)
+        hass.services.async_register(DOMAIN, SVC_RESET_YEAR, _handle_reset_year)
+        hass.services.async_register(DOMAIN, SVC_RESET_LIFETIME, _handle_reset_lifetime)
+        hass.services.async_register(DOMAIN, SVC_RESET_SESSION_GRID, _handle_reset_session_grid)
+        hass.services.async_register(DOMAIN, SVC_RESET_YEAR_GRID, _handle_reset_year_grid)
+        hass.services.async_register(DOMAIN, SVC_RESET_LIFETIME_GRID, _handle_reset_lifetime_grid)
+        hass.services.async_register(DOMAIN, SVC_RESET_ALL, _handle_reset_all)
+        hass.data[DOMAIN]["_services_registered"] = True
 
-    # Build service names
-    service_names = {
-        "reset_avg_session": f"reset_avg_session_{suffix}",
-        "reset_avg_year": f"reset_avg_year_{suffix}",
-        "reset_avg_lifetime": f"reset_avg_lifetime_{suffix}",
-        "reset_avg_session_grid": f"reset_avg_session_grid_{suffix}",
-        "reset_avg_year_grid": f"reset_avg_year_grid_{suffix}",
-        "reset_avg_lifetime_grid": f"reset_avg_lifetime_grid_{suffix}",
-        "reset_all_averages": f"reset_all_averages_{suffix}",
-    }
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_update_listener))
+    return True
 
-    # Map services to the entity key/method operations they should perform
-    ops_by_service: dict[str, list[tuple[str, str]]] = {
-        service_names["reset_avg_session"]: [("avg_session_entity", "async_reset_avg_session")],
-        service_names["reset_avg_year"]: [("avg_year_entity", "async_reset_avg_year")],
-        service_names["reset_avg_lifetime"]: [("avg_lifetime_entity", "async_reset_avg_lifetime")],
-        service_names["reset_avg_session_grid"]: [("avg_session_grid_entity", "async_reset_avg_session")],
-        service_names["reset_avg_year_grid"]: [("avg_year_grid_entity", "async_reset_avg_year")],
-        service_names["reset_avg_lifetime_grid"]: [("avg_lifetime_grid_entity", "async_reset_avg_lifetime")],
-        service_names["reset_all_averages"]: [
+
+async def _handle_reset_session(call: ServiceCall) -> None:
+    await _handle_reset(call, [("avg_session_entity", "async_reset_avg_session")])
+
+
+async def _handle_reset_year(call: ServiceCall) -> None:
+    await _handle_reset(call, [("avg_year_entity", "async_reset_avg_year")])
+
+
+async def _handle_reset_lifetime(call: ServiceCall) -> None:
+    await _handle_reset(call, [("avg_lifetime_entity", "async_reset_avg_lifetime")])
+
+
+async def _handle_reset_session_grid(call: ServiceCall) -> None:
+    await _handle_reset(call, [("avg_session_grid_entity", "async_reset_avg_session")])
+
+
+async def _handle_reset_year_grid(call: ServiceCall) -> None:
+    await _handle_reset(call, [("avg_year_grid_entity", "async_reset_avg_year")])
+
+
+async def _handle_reset_lifetime_grid(call: ServiceCall) -> None:
+    await _handle_reset(call, [("avg_lifetime_grid_entity", "async_reset_avg_lifetime")])
+
+
+async def _handle_reset_all(call: ServiceCall) -> None:
+    await _handle_reset(
+        call,
+        [
             ("avg_session_entity", "async_reset_avg_session"),
             ("avg_year_entity", "async_reset_avg_year"),
             ("avg_lifetime_entity", "async_reset_avg_lifetime"),
@@ -114,44 +177,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ("avg_year_grid_entity", "async_reset_avg_year"),
             ("avg_lifetime_grid_entity", "async_reset_avg_lifetime"),
         ],
-    }
+    )
 
-    async def _handle_reset(call: ServiceCall) -> None:
-        data = hass.data[DOMAIN].get(entry.entry_id) or {}
-        ops = ops_by_service.get(call.service, [])
-        tasks = []
-        for key, method in ops:
-            ent = data.get(key)
-            if ent and hasattr(ent, method):
-                tasks.append(getattr(ent, method)())
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Register all services with the same handler
-    for svc_name in service_names.values():
-        hass.services.async_register(DOMAIN, svc_name, _handle_reset)
+async def _handle_reset(call: ServiceCall, ops: list[tuple[str, str]]) -> None:
+    """Resolve entry by entry_id or name and invoke the requested reset(s)."""
+    hass = call.hass
+    entry_id = _find_entry_id(
+        hass,
+        entry_id=str(call.data.get("entry_id") or "").strip() or None,
+        name=str(call.data.get("name") or "").strip() or None,
+    )
+    if not entry_id:
+        return
 
-    hass.data[DOMAIN][entry.entry_id]["per_entry_services"] = list(service_names.values())
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(_update_listener))
-    return True
+    data = hass.data[DOMAIN].get(entry_id) or {}
+    tasks: list = []
+    for key, method in ops:
+        ent = data.get(key)
+        if ent and hasattr(ent, method):
+            tasks.append(getattr(ent, method)())
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    for svc in data.get("per_entry_services", []):
-        with contextlib.suppress(Exception):
-            hass.services.async_remove(DOMAIN, svc)
-
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        data = hass.data[DOMAIN].pop(entry.entry_id, None)
-        coordinator = data.get("coordinator") if data else None
+        data = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        coordinator = data.get("coordinator") if isinstance(data, dict) else None
         if coordinator:
             await coordinator.async_shutdown()
-        if not hass.data[DOMAIN]:
+
+        # If no entries left, remove global services
+        if DOMAIN in hass.data and not any(k for k in hass.data[DOMAIN].keys() if not k.startswith("_")):
+            for svc in _ALL_SERVICES:
+                with contextlib.suppress(Exception):
+                    hass.services.async_remove(DOMAIN, svc)
+            hass.data[DOMAIN].pop("_services_registered", None)
+
+        if not hass.data.get(DOMAIN):
             hass.data.pop(DOMAIN, None)
+
     return unloaded
 
 
