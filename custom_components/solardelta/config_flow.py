@@ -2,23 +2,23 @@ from __future__ import annotations
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import callback
+from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.helpers.selector import selector
 
 from .const import (
-    CONF_DEVICE_ENTITY,
-    CONF_GRID_ENTITY,
-    CONF_GRID_EXPORT_ENTITY,
-    CONF_GRID_IMPORT_ENTITY,
-    CONF_GRID_SEPARATE,
+    DOMAIN,
     CONF_NAME,
-    CONF_RESET_ENTITY,
-    CONF_RESET_STRING,
     CONF_SOLAR_ENTITY,
+    CONF_GRID_ENTITY,
+    CONF_GRID_SEPARATE,
+    CONF_GRID_IMPORT_ENTITY,
+    CONF_GRID_EXPORT_ENTITY,
+    CONF_DEVICE_ENTITY,
     CONF_STATUS_ENTITY,
     CONF_STATUS_STRING,
-    DOMAIN,
+    CONF_RESET_ENTITY,
+    CONF_RESET_STRING,
 )
 
 
@@ -36,14 +36,6 @@ def _existing_names(
         nm = e.options.get(CONF_NAME) or e.data.get(CONF_NAME) or e.title or ""
         names.add(_norm(nm))
     return names
-
-
-def _req_entity_field(fields: dict, key: str, default_val: str | None, domains: list[str]) -> None:
-    sel = selector({"entity": {"domain": domains}})
-    if default_val is not None:
-        fields[vol.Required(key, default=default_val)] = sel
-    else:
-        fields[vol.Required(key)] = sel
 
 
 class SolarDeltaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -65,6 +57,7 @@ class SolarDeltaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_show_form(step_id="user", data_schema=schema)
 
         errors: dict[str, str] = {}
+
         # Unique name validation
         new_name = user_input.get(CONF_NAME)
         existing = _existing_names(self._async_current_entries())
@@ -96,10 +89,11 @@ class SolarDeltaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if separate:
             if not user_input.get(CONF_GRID_IMPORT_ENTITY):
                 errors[CONF_GRID_IMPORT_ENTITY] = "required_if_separate"
-            elif not user_input.get(CONF_GRID_EXPORT_ENTITY):
+            if not user_input.get(CONF_GRID_EXPORT_ENTITY):
                 errors[CONF_GRID_EXPORT_ENTITY] = "required_if_separate"
-        elif not user_input.get(CONF_GRID_ENTITY):
-            errors[CONF_GRID_ENTITY] = "required_if_not_separate"
+        else:
+            if not user_input.get(CONF_GRID_ENTITY):
+                errors[CONF_GRID_ENTITY] = "required_if_not_separate"
 
         # Required common fields
         required_keys = [
@@ -135,17 +129,17 @@ def _build_details_schema(separate: bool) -> vol.Schema:
     fields: dict = {}
 
     # Always required
-    _req_entity_field(fields, CONF_SOLAR_ENTITY, None, ["sensor"])
+    fields[vol.Required(CONF_SOLAR_ENTITY)] = selector({"entity": {"domain": "sensor"}})
 
     # Show only the grid fields for the chosen mode
     if separate:
-        _req_entity_field(fields, CONF_GRID_IMPORT_ENTITY, None, ["sensor"])
-        _req_entity_field(fields, CONF_GRID_EXPORT_ENTITY, None, ["sensor"])
+        fields[vol.Required(CONF_GRID_IMPORT_ENTITY)] = selector({"entity": {"domain": "sensor"}})
+        fields[vol.Required(CONF_GRID_EXPORT_ENTITY)] = selector({"entity": {"domain": "sensor"}})
     else:
-        _req_entity_field(fields, CONF_GRID_ENTITY, None, ["sensor"])
+        fields[vol.Required(CONF_GRID_ENTITY)] = selector({"entity": {"domain": "sensor"}})
 
     # Remaining required inputs
-    _req_entity_field(fields, CONF_DEVICE_ENTITY, None, ["sensor"])
+    fields[vol.Required(CONF_DEVICE_ENTITY)] = selector({"entity": {"domain": "sensor"}})
     fields[vol.Required(CONF_STATUS_ENTITY)] = selector(entity_selector_any)
     fields[vol.Required(CONF_STATUS_STRING)] = str
     fields[vol.Required(CONF_RESET_ENTITY)] = selector(entity_selector_any)
@@ -183,7 +177,7 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
         except TypeError:
             super().__init__()
             # Older HA versions require storing it manually
-            self.config_entry = config_entry
+            self.config_entry = config_entry  # noqa: SLF001
         self._grid_separate: bool | None = None
 
     async def async_step_init(self, user_input=None):
@@ -198,7 +192,9 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
             cur_import = get_opt(CONF_GRID_IMPORT_ENTITY) or get_dat(CONF_GRID_IMPORT_ENTITY)
             cur_export = get_opt(CONF_GRID_EXPORT_ENTITY) or get_dat(CONF_GRID_EXPORT_ENTITY)
 
-            grid_mode = "Separate grid import/export sensors" if current_sep else "Single net grid power sensor"
+            grid_mode = (
+                "Separate grid import/export sensors" if current_sep else "Single net grid power sensor"
+            )
             if current_sep:
                 grid_detail = f"Import: {cur_import or '(not set)'}\nExport: {cur_export or '(not set)'}"
             else:
@@ -228,7 +224,11 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
 
     async def async_step_details(self, user_input=None):
         """Step 2: details; show only relevant grid fields."""
-        separate = self._grid_separate if self._grid_separate is not None else self._get_current_separate()
+        separate = (
+            self._grid_separate
+            if self._grid_separate is not None
+            else self._get_current_separate()
+        )
 
         schema = self._build_schema(separate)
 
@@ -251,10 +251,11 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
         if separate:
             if not user_input.get(CONF_GRID_IMPORT_ENTITY):
                 errors[CONF_GRID_IMPORT_ENTITY] = "required_if_separate"
-            elif not user_input.get(CONF_GRID_EXPORT_ENTITY):
+            if not user_input.get(CONF_GRID_EXPORT_ENTITY):
                 errors[CONF_GRID_EXPORT_ENTITY] = "required_if_separate"
-        elif not user_input.get(CONF_GRID_ENTITY):
-            errors[CONF_GRID_ENTITY] = "required_if_not_separate"
+        else:
+            if not user_input.get(CONF_GRID_ENTITY):
+                errors[CONF_GRID_ENTITY] = "required_if_not_separate"
 
         # Required fields
         required_keys = [
@@ -298,16 +299,20 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
         get_opt = self.config_entry.options.get
         get_dat = self.config_entry.data.get
 
-        # Current values (options preferred over data)
         cur_solar = get_opt(CONF_SOLAR_ENTITY) or get_dat(CONF_SOLAR_ENTITY)
+
         cur_grid = get_opt(CONF_GRID_ENTITY) or get_dat(CONF_GRID_ENTITY)
         cur_import = get_opt(CONF_GRID_IMPORT_ENTITY) or get_dat(CONF_GRID_IMPORT_ENTITY)
         cur_export = get_opt(CONF_GRID_EXPORT_ENTITY) or get_dat(CONF_GRID_EXPORT_ENTITY)
+
         cur_device = get_opt(CONF_DEVICE_ENTITY) or get_dat(CONF_DEVICE_ENTITY)
+
         cur_status_entity = get_opt(CONF_STATUS_ENTITY) or get_dat(CONF_STATUS_ENTITY)
         cur_status_string = get_opt(CONF_STATUS_STRING) or get_dat(CONF_STATUS_STRING) or ""
+
         cur_reset_entity = get_opt(CONF_RESET_ENTITY) or get_dat(CONF_RESET_ENTITY)
         cur_reset_string = get_opt(CONF_RESET_STRING) or get_dat(CONF_RESET_STRING) or ""
+
         cur_scan = get_opt(CONF_SCAN_INTERVAL)
         if cur_scan is None:
             cur_scan = get_dat(CONF_SCAN_INTERVAL)
@@ -315,33 +320,76 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
             cur_scan = 0
 
         entity_selector_any = {"entity": {"domain": ["sensor", "binary_sensor"]}}
+
         fields: dict = {}
 
         # Solar
-        _req_entity_field(fields, CONF_SOLAR_ENTITY, cur_solar, ["sensor"])
-
-        # Grid (only the active mode's fields)
-        if separate:
-            _req_entity_field(fields, CONF_GRID_IMPORT_ENTITY, cur_import, ["sensor"])
-            _req_entity_field(fields, CONF_GRID_EXPORT_ENTITY, cur_export, ["sensor"])
+        if cur_solar is not None:
+            fields[vol.Required(CONF_SOLAR_ENTITY, default=cur_solar)] = selector(
+                {"entity": {"domain": "sensor"}}
+            )
         else:
-            _req_entity_field(fields, CONF_GRID_ENTITY, cur_grid, ["sensor"])
+            fields[vol.Required(CONF_SOLAR_ENTITY)] = selector(
+                {"entity": {"domain": "sensor"}}
+            )
+
+        # Grid (only the active mode’s fields)
+        if separate:
+            if cur_import is not None:
+                fields[
+                    vol.Required(CONF_GRID_IMPORT_ENTITY, default=cur_import)
+                ] = selector({"entity": {"domain": "sensor"}})
+            else:
+                fields[vol.Required(CONF_GRID_IMPORT_ENTITY)] = selector(
+                    {"entity": {"domain": "sensor"}}
+                )
+
+            if cur_export is not None:
+                fields[
+                    vol.Required(CONF_GRID_EXPORT_ENTITY, default=cur_export)
+                ] = selector({"entity": {"domain": "sensor"}})
+            else:
+                fields[vol.Required(CONF_GRID_EXPORT_ENTITY)] = selector(
+                    {"entity": {"domain": "sensor"}}
+                )
+        else:
+            if cur_grid is not None:
+                fields[vol.Required(CONF_GRID_ENTITY, default=cur_grid)] = selector(
+                    {"entity": {"domain": "sensor"}}
+                )
+            else:
+                fields[vol.Required(CONF_GRID_ENTITY)] = selector(
+                    {"entity": {"domain": "sensor"}}
+                )
 
         # Device
-        _req_entity_field(fields, CONF_DEVICE_ENTITY, cur_device, ["sensor"])
+        if cur_device is not None:
+            fields[vol.Required(CONF_DEVICE_ENTITY, default=cur_device)] = selector(
+                {"entity": {"domain": "sensor"}}
+            )
+        else:
+            fields[vol.Required(CONF_DEVICE_ENTITY)] = selector(
+                {"entity": {"domain": "sensor"}}
+            )
 
         # Status
         if cur_status_entity is not None:
-            fields[vol.Required(CONF_STATUS_ENTITY, default=cur_status_entity)] = selector(entity_selector_any)
+            fields[
+                vol.Required(CONF_STATUS_ENTITY, default=cur_status_entity)
+            ] = selector(entity_selector_any)
         else:
             fields[vol.Required(CONF_STATUS_ENTITY)] = selector(entity_selector_any)
+
         fields[vol.Required(CONF_STATUS_STRING, default=cur_status_string)] = str
 
         # Reset
         if cur_reset_entity is not None:
-            fields[vol.Required(CONF_RESET_ENTITY, default=cur_reset_entity)] = selector(entity_selector_any)
+            fields[
+                vol.Required(CONF_RESET_ENTITY, default=cur_reset_entity)
+            ] = selector(entity_selector_any)
         else:
             fields[vol.Required(CONF_RESET_ENTITY)] = selector(entity_selector_any)
+
         fields[vol.Required(CONF_RESET_STRING, default=cur_reset_string)] = str
 
         # Scan interval
