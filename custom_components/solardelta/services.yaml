@@ -4,4 +4,8 @@
 # - solardelta.reset_avg_session_{entry_slug}
 # - solardelta.reset_avg_year_{entry_slug}
 # - solardelta.reset_avg_lifetime_{entry_slug}
+# - solardelta.reset_avg_session_grid_{entry_slug}
+# - solardelta.reset_avg_year_grid_{entry_slug}
+# - solardelta.reset_avg_lifetime_grid_{entry_slug}
+# - solardelta.reset_all_averages_{entry_slug}
 # where {entry_slug} is the slugified entry name.
