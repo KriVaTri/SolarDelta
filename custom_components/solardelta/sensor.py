@@ -182,7 +182,7 @@ class _AvgBase(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
     async def _reset_to_zero(self) -> None:
         self._sum_cov_dt = 0.0
         self._sum_dt = 0.0
-               self._current_value = 0
+        self._current_value = 0
         self._last_ts_utc = dt_util.utcnow()
         self.async_write_ha_state()
         await self._persist()
