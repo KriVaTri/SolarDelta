@@ -228,11 +228,7 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
 
     async def async_step_details(self, user_input=None):
         """Step 2: details; show only relevant grid fields."""
-        separate = (
-            self._grid_separate
-            if self._grid_separate is not None
-            else self._get_current_separate()
-        )
+        separate = self._grid_separate if self._grid_separate is not None else self._get_current_separate()
 
         schema = self._build_schema(separate)
 
@@ -324,7 +320,7 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
         # Solar
         _req_entity_field(fields, CONF_SOLAR_ENTITY, cur_solar, ["sensor"])
 
-        # Grid (only the active mode’s fields)
+        # Grid (only the active mode's fields)
         if separate:
             _req_entity_field(fields, CONF_GRID_IMPORT_ENTITY, cur_import, ["sensor"])
             _req_entity_field(fields, CONF_GRID_EXPORT_ENTITY, cur_export, ["sensor"])
