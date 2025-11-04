@@ -5,8 +5,8 @@
 Home Assistant custom integration that compares solar production with a device’s consumption and exposes percentage sensors per entry.
 
 Highlights:
-- Grid‑unaware coverage sensors: use Solar and Device power only.
-- Grid‑aware coverage sensors: additionally incorporate a Grid power sensor.
+- Grid‑unaware coverage sensors (does not take into account other loads): use Solar and Device power only.
+- Grid‑aware coverage sensors (takes into account other loads): additionally incorporate a Grid power sensor.
 - Flexible grid inputs:
   - Single net grid power sensor (positive = export, negative = import), or
   - Separate positive‑only sensors for Import and Export (net = Export − Import; negatives are clamped to 0).
