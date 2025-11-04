@@ -9,15 +9,13 @@ from homeassistant.helpers.selector import selector
 from .const import (
     DOMAIN,
     CONF_SOLAR_ENTITY,
+    CONF_GRID_ENTITY,
     CONF_DEVICE_ENTITY,
     CONF_NAME,
     CONF_STATUS_ENTITY,
     CONF_STATUS_STRING,
     CONF_RESET_ENTITY,
     CONF_RESET_STRING,
-    CONF_DEVICE_ENTITIES,
-    LEGACY_CONF_TRIGGER_ENTITY,
-    LEGACY_CONF_TRIGGER_STRING_1,
 )
 
 
@@ -41,6 +39,7 @@ def _build_user_schema() -> vol.Schema:
         {
             vol.Required(CONF_NAME): str,
             vol.Required(CONF_SOLAR_ENTITY): selector({"entity": {"domain": "sensor"}}),
+            vol.Required(CONF_GRID_ENTITY): selector({"entity": {"domain": "sensor"}}),
             vol.Required(CONF_DEVICE_ENTITY): selector({"entity": {"domain": "sensor"}}),
             vol.Required(CONF_STATUS_ENTITY): selector(entity_selector),
             vol.Required(CONF_STATUS_STRING): str,
@@ -121,30 +120,15 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
         get_dat = self.config_entry.data.get
 
         cur_solar = get_opt(CONF_SOLAR_ENTITY) or get_dat(CONF_SOLAR_ENTITY)
-        legacy_devices = get_opt(CONF_DEVICE_ENTITIES) or get_dat(CONF_DEVICE_ENTITIES) or []
-        cur_device = (
-            get_opt(CONF_DEVICE_ENTITY)
-            or get_dat(CONF_DEVICE_ENTITY)
-            or (legacy_devices[0] if legacy_devices else None)
-        )
+        cur_grid = get_opt(CONF_GRID_ENTITY) or get_dat(CONF_GRID_ENTITY)
+        cur_device = get_opt(CONF_DEVICE_ENTITY) or get_dat(CONF_DEVICE_ENTITY)
 
         cur_status_entity = get_opt(CONF_STATUS_ENTITY) or get_dat(CONF_STATUS_ENTITY)
         cur_status_string = get_opt(CONF_STATUS_STRING) or get_dat(CONF_STATUS_STRING) or ""
 
-        # New reset fields with legacy fallback to trigger_*
-        cur_reset_entity = (
-            get_opt(CONF_RESET_ENTITY)
-            or get_dat(CONF_RESET_ENTITY)
-            or get_opt(LEGACY_CONF_TRIGGER_ENTITY)
-            or get_dat(LEGACY_CONF_TRIGGER_ENTITY)
-        )
-        cur_reset_string = (
-            get_opt(CONF_RESET_STRING)
-            or get_dat(CONF_RESET_STRING)
-            or get_opt(LEGACY_CONF_TRIGGER_STRING_1)
-            or get_dat(LEGACY_CONF_TRIGGER_STRING_1)
-            or ""
-        )
+        # Reset fields (no legacy fallback)
+        cur_reset_entity = get_opt(CONF_RESET_ENTITY) or get_dat(CONF_RESET_ENTITY)
+        cur_reset_string = get_opt(CONF_RESET_STRING) or get_dat(CONF_RESET_STRING) or ""
 
         cur_scan = get_opt(CONF_SCAN_INTERVAL)
         if cur_scan is None:
@@ -162,6 +146,11 @@ class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
             )
         else:
             schema_fields[vol.Required(CONF_SOLAR_ENTITY)] = selector({"entity": {"domain": "sensor"}})
+
+        if cur_grid is not None:
+            schema_fields[vol.Required(CONF_GRID_ENTITY, default=cur_grid)] = selector({"entity": {"domain": "sensor"}})
+        else:
+            schema_fields[vol.Required(CONF_GRID_ENTITY)] = selector({"entity": {"domain": "sensor"}})
 
         if cur_device is not None:
             schema_fields[vol.Required(CONF_DEVICE_ENTITY, default=cur_device)] = selector(
