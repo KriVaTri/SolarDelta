@@ -46,6 +46,28 @@ def _to_watts(st: State | None, *, allow_negative: bool = False) -> float | None
     return val
 
 
+def _clamp_pct(x: float) -> float:
+    return max(0.0, min(x, PCT_MAX))
+
+
+def _compute_unaware_pct(solar_w: float | None, device_w: float | None, allowed_base: bool) -> float:
+    if not allowed_base or solar_w is None or device_w is None or device_w <= 0:
+        return 0.0
+    return _clamp_pct((solar_w / device_w) * 100.0)
+
+
+def _compute_grid_pct(solar_w: float | None, grid_w: float | None, allowed_base: bool) -> float:
+    if not allowed_base or solar_w is None or grid_w is None:
+        return 0.0
+    # Home load derived from balance: Solar - HomeLoad = Grid  => HomeLoad = Solar - Grid
+    home_load = solar_w - grid_w
+    if home_load <= 0:
+        return PCT_MAX
+    if solar_w <= 0:
+        return 0.0
+    return _clamp_pct((solar_w / home_load) * 100.0)
+
+
 class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(  # noqa: PLR0913
         self,
@@ -175,36 +197,9 @@ class SolarDeltaCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         conditions_allowed_unaware = bool(allowed_base and (solar_w is not None))
         conditions_allowed_grid = bool(allowed_base and (solar_w is not None) and (grid_w is not None))
 
-        # Legacy/grid-unaware instantaneous coverage (solar/device)
-        if not allowed_base:
-            pct: float | int = 0
-        elif solar_w is None or device_w is None or device_w <= 0:
-            pct = 0
-        else:
-            pct = (solar_w / device_w) * 100.0
-            if pct < 0.0:
-                pct = 0.0
-            if pct > PCT_MAX:
-                pct = PCT_MAX
-
-        # Grid-aware instantaneous coverage (solar/home_load) with net grid where +export, -import
-        if not allowed_base:
-            pct_grid: float | int = 0
-        elif solar_w is None or (grid_w is None):
-            pct_grid = 0
-        else:
-            # Home load derived from balance: Solar - HomeLoad = Grid  => HomeLoad = Solar - Grid
-            home_load = solar_w - grid_w
-            if home_load <= 0:
-                pct_grid = 100
-            elif solar_w <= 0:
-                pct_grid = 0
-            else:
-                pct_grid = (solar_w / home_load) * 100.0
-                if pct_grid < 0.0:
-                    pct_grid = 0.0
-                if pct_grid > PCT_MAX:
-                    pct_grid = PCT_MAX
+        # Instantaneous coverage values (still computed for UI even if averages pause)
+        pct = _compute_unaware_pct(solar_w, device_w, allowed_base)
+        pct_grid = _compute_grid_pct(solar_w, grid_w, allowed_base)
 
         return {
             "solar_w": solar_w,
