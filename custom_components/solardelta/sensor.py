@@ -182,7 +182,7 @@ class _AvgBase(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
     async def _reset_to_zero(self) -> None:
         self._sum_cov_dt = 0.0
         self._sum_dt = 0.0
-        self._current_value = 0
+               self._current_value = 0
         self._last_ts_utc = dt_util.utcnow()
         self.async_write_ha_state()
         await self._persist()
@@ -232,9 +232,7 @@ class _AvgBase(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
     def _coverage_and_allowed(self) -> tuple[float | int | None, bool]:
         data = self.coordinator.data or {}
         # Prefer new per-average gating, fallback to legacy flag if needed
-        allowed = bool(
-            data.get("conditions_allowed_unaware", data.get("conditions_allowed", True))
-        )
+        allowed = bool(data.get("conditions_allowed_unaware", data.get("conditions_allowed", True)))
         return data.get("coverage_pct"), allowed
 
     @callback
@@ -277,9 +275,7 @@ class SolarCoverageAvgSessionSensor(_AvgBase):
         self._last_reset_norm = data.get("last_reset_norm")
 
     def _persist_extra(self) -> dict:
-        return {
-            "last_reset_norm": self._last_reset_norm,
-        }
+        return {"last_reset_norm": self._last_reset_norm}
 
     def _normalize_state(self, st: State | None) -> str | None:
         if st is None:
@@ -365,9 +361,7 @@ class SolarCoverageAvgLifetimeSensor(_AvgBase):
 class _AvgBaseGrid(_AvgBase):
     def _coverage_and_allowed(self) -> tuple[float | int | None, bool]:
         data = self.coordinator.data or {}
-        allowed = bool(
-            data.get("conditions_allowed_grid", data.get("conditions_allowed", True))
-        )
+        allowed = bool(data.get("conditions_allowed_grid", data.get("conditions_allowed", True)))
         return data.get("coverage_grid_pct"), allowed
 
 
