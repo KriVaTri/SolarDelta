@@ -235,7 +235,11 @@ class _AvgBase(CoordinatorEntity[SolarDeltaCoordinator], SensorEntity):
 
     def _coverage_and_allowed(self) -> tuple[Optional[float | int], bool]:
         data = self.coordinator.data or {}
-        return data.get("coverage_pct"), bool(data.get("conditions_allowed", True))
+        # Prefer new per-average gating, fallback to legacy flag if needed
+        allowed = bool(
+            data.get("conditions_allowed_unaware", data.get("conditions_allowed", True))
+        )
+        return data.get("coverage_pct"), allowed
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -365,7 +369,10 @@ class SolarCoverageAvgLifetimeSensor(_AvgBase):
 class _AvgBaseGrid(_AvgBase):
     def _coverage_and_allowed(self) -> tuple[Optional[float | int], bool]:
         data = self.coordinator.data or {}
-        return data.get("coverage_grid_pct"), bool(data.get("conditions_allowed", True))
+        allowed = bool(
+            data.get("conditions_allowed_grid", data.get("conditions_allowed", True))
+        )
+        return data.get("coverage_grid_pct"), allowed
 
 
 class SolarCoverageAvgSessionGridSensor(_AvgBaseGrid):
