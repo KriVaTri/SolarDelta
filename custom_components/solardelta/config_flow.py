@@ -1,411 +1,831 @@
 from __future__ import annotations
 
 import voluptuous as vol
+from typing import Optional, Dict, List, Tuple
+import logging
+
 from homeassistant import config_entries
-from homeassistant.core import callback
+from homeassistant.core import callback, State
 from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.helpers.selector import selector
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
     CONF_NAME,
-    CONF_SOLAR_ENTITY,
-    CONF_GRID_ENTITY,
-    CONF_GRID_SEPARATE,
-    CONF_GRID_IMPORT_ENTITY,
-    CONF_GRID_EXPORT_ENTITY,
-    CONF_DEVICE_ENTITY,
-    CONF_STATUS_ENTITY,
-    CONF_STATUS_STRING,
-    CONF_RESET_ENTITY,
-    CONF_RESET_STRING,
+    CONF_GRID_SINGLE,
+    CONF_GRID_POWER,
+    CONF_GRID_IMPORT,
+    CONF_GRID_EXPORT,
+    CONF_CHARGE_POWER,
+    CONF_WALLBOX_STATUS,
+    CONF_CABLE_CONNECTED,
+    CONF_CHARGING_ENABLE,
+    CONF_LOCK_SENSOR,
+    CONF_CURRENT_SETTING,
+    # Legacy compat flag
+    CONF_WALLBOX_THREE_PHASE,
+    # Supply profile
+    CONF_SUPPLY_PROFILE,
+    SUPPLY_PROFILES,
+    # Thresholds
+    CONF_ECO_ON_UPPER,
+    CONF_ECO_ON_LOWER,
+    CONF_ECO_OFF_UPPER,
+    CONF_ECO_OFF_LOWER,
+    DEFAULT_ECO_ON_UPPER,
+    DEFAULT_ECO_ON_LOWER,
+    DEFAULT_ECO_OFF_UPPER,
+    DEFAULT_ECO_OFF_LOWER,
+    MIN_THRESHOLD_VALUE,
+    MAX_THRESHOLD_VALUE,
+    MIN_BAND_SINGLE_PHASE,
+    MIN_BAND_THREE_PHASE,
+    # Timers and intervals
+    DEFAULT_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+    CONF_SUSTAIN_SECONDS,
+    DEFAULT_SUSTAIN_SECONDS,
+    SUSTAIN_MIN_SECONDS,
+    SUSTAIN_MAX_SECONDS,
+    # Device + optional
+    CONF_DEVICE_ID,
+    CONF_EV_BATTERY_LEVEL,
+    # Current limit
+    CONF_MAX_CURRENT_LIMIT_A,
+    ABS_MIN_CURRENT_A,
+    ABS_MAX_CURRENT_A,
 )
 
-
-def _norm(s: str | None) -> str:
-    return (s or "").strip().casefold()
+_LOGGER = logging.getLogger(__name__)
 
 
-def _existing_names(
-    entries: list[config_entries.ConfigEntry], exclude_entry_id: str | None = None
-) -> set[str]:
-    names: set[str] = set()
-    for e in entries:
-        if exclude_entry_id and e.entry_id == exclude_entry_id:
-            continue
-        nm = e.options.get(CONF_NAME) or e.data.get(CONF_NAME) or e.title or ""
-        names.add(_norm(nm))
-    return names
+def _merged(entry: config_entries.ConfigEntry) -> dict:
+    return {**entry.data, **entry.options}
 
 
-class SolarDeltaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    VERSION = 1
+def _normalize_number(raw) -> float:
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if raw is None or not isinstance(raw, str):
+        raise ValueError("missing or non-string")
+    s = raw.strip()
+    if not s:
+        raise ValueError("empty")
+    s = s.replace("−", "-")
+    tmp = s.replace(".", "").replace(",", "").replace(" ", "")
+    if tmp and ((tmp.startswith("-") and tmp[1:].isdigit()) or tmp.isdigit()):
+        s = tmp
+    return float(s)
 
-    def __init__(self) -> None:
-        self._step1: dict | None = None
 
-    async def async_step_user(self, user_input=None):
-        """Step 1: name + choose grid mode."""
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_NAME): str,
-                vol.Required(CONF_GRID_SEPARATE, default=False): selector({"boolean": {}}),
-            }
-        )
+def _validate_thresholds(data: dict, three_phase: bool) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    band_min = MIN_BAND_THREE_PHASE if three_phase else MIN_BAND_SINGLE_PHASE
+    try:
+        on_up = _normalize_number(data.get(CONF_ECO_ON_UPPER))
+        on_lo = _normalize_number(data.get(CONF_ECO_ON_LOWER))
+        off_up = _normalize_number(data.get(CONF_ECO_OFF_UPPER))
+        off_lo = _normalize_number(data.get(CONF_ECO_OFF_LOWER))
+    except Exception:
+        for k in (CONF_ECO_ON_UPPER, CONF_ECO_ON_LOWER, CONF_ECO_OFF_UPPER, CONF_ECO_OFF_LOWER):
+            errors[k] = "value_out_of_range"
+        return errors
 
-        if user_input is None:
-            return self.async_show_form(step_id="user", data_schema=schema)
+    def in_range(v: float) -> bool:
+        return MIN_THRESHOLD_VALUE <= v <= MAX_THRESHOLD_VALUE
 
-        errors: dict[str, str] = {}
+    for k, v in [
+        (CONF_ECO_ON_UPPER, on_up),
+        (CONF_ECO_ON_LOWER, on_lo),
+        (CONF_ECO_OFF_UPPER, off_up),
+        (CONF_ECO_OFF_LOWER, off_lo),
+    ]:
+        if not in_range(v):
+            errors[k] = "value_out_of_range"
 
-        # Unique name validation
-        new_name = user_input.get(CONF_NAME)
-        existing = _existing_names(self._async_current_entries())
-        if _norm(new_name) in existing:
-            errors[CONF_NAME] = "name_in_use"
+    if (on_up - on_lo) < band_min:
+        errors[CONF_ECO_ON_UPPER] = "eco_on_band_small"
+    if (off_up - off_lo) < band_min:
+        errors[CONF_ECO_OFF_UPPER] = "eco_off_band_small"
 
-        if errors:
-            return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+    if on_up <= off_up:
+        errors[CONF_ECO_ON_UPPER] = "must_exceed_off_upper"
+    if on_lo <= off_lo:
+        errors[CONF_ECO_ON_LOWER] = "must_exceed_off_lower"
 
-        # Save step 1 choices and continue
-        self._step1 = {
-            CONF_NAME: new_name,
-            CONF_GRID_SEPARATE: bool(user_input.get(CONF_GRID_SEPARATE, False)),
+    if on_lo >= on_up:
+        errors[CONF_ECO_ON_LOWER] = "lower_above_upper"
+    if off_lo >= off_up:
+        errors[CONF_ECO_OFF_LOWER] = "lower_above_upper"
+    return errors
+
+
+# Keys we will filter/prefill by the selected device (wallbox-related)
+KEY_DOMAIN_MAP: Dict[str, str] = {
+    CONF_CHARGE_POWER: "sensor",
+    CONF_WALLBOX_STATUS: "sensor",
+    CONF_CABLE_CONNECTED: "binary_sensor",
+    CONF_CHARGING_ENABLE: "switch",
+    CONF_LOCK_SENSOR: "lock",
+    CONF_CURRENT_SETTING: "number",
+}
+FILTERABLE_KEYS = set(KEY_DOMAIN_MAP.keys())
+
+
+def _build_sensors_schema(
+    grid_single: bool,
+    defaults: dict,
+    selected_device: Optional[str] = None,
+    filter_keys: Optional[set[str]] = None,
+) -> vol.Schema:
+    num_sel_w = {
+        "number": {
+            "min": MIN_THRESHOLD_VALUE,
+            "max": MAX_THRESHOLD_VALUE,
+            "step": 100,
+            "mode": "box",
+            "unit_of_measurement": "W",
         }
-        return await self.async_step_details()
-
-    async def async_step_details(self, user_input=None):
-        """Step 2: sensors and strings; grid fields depend on mode."""
-        assert self._step1 is not None, "Step 1 must be completed first"
-        separate = bool(self._step1.get(CONF_GRID_SEPARATE, False))
-
-        schema = _build_details_schema(separate)
-
-        if user_input is None:
-            return self.async_show_form(step_id="details", data_schema=schema)
-
-        # Validate according to selected grid mode
-        errors: dict[str, str] = {}
-        if separate:
-            if not user_input.get(CONF_GRID_IMPORT_ENTITY):
-                errors[CONF_GRID_IMPORT_ENTITY] = "required_if_separate"
-            if not user_input.get(CONF_GRID_EXPORT_ENTITY):
-                errors[CONF_GRID_EXPORT_ENTITY] = "required_if_separate"
-        else:
-            if not user_input.get(CONF_GRID_ENTITY):
-                errors[CONF_GRID_ENTITY] = "required_if_not_separate"
-
-        # Required common fields
-        required_keys = [
-            CONF_SOLAR_ENTITY,
-            CONF_DEVICE_ENTITY,
-            CONF_STATUS_ENTITY,
-            CONF_STATUS_STRING,
-            CONF_RESET_ENTITY,
-            CONF_RESET_STRING,
-        ]
-        for k in required_keys:
-            if not user_input.get(k):
-                errors[k] = "required"
-
-        if errors:
-            return self.async_show_form(step_id="details", data_schema=schema, errors=errors)
-
-        data = {**self._step1, **user_input}
-        title = self._step1.get(CONF_NAME) or "SolarDelta"
-        return self.async_create_entry(title=title, data=data)
-
-    @staticmethod
-    @callback
-    def async_get_options_flow(config_entry):
-        return SolarDeltaOptionsFlowHandler(config_entry)
-
-
-@callback
-def _build_details_schema(separate: bool) -> vol.Schema:
-    """Builds the step 2 schema for the initial config flow."""
-    entity_selector_any = {"entity": {"domain": ["sensor", "binary_sensor"]}}
+    }
+    num_sel_s = {
+        "number": {
+            "min": SUSTAIN_MIN_SECONDS,
+            "max": SUSTAIN_MAX_SECONDS,
+            "step": 1,
+            "mode": "box",
+            "unit_of_measurement": "s",
+        }
+    }
+    num_sel_a = {
+        "number": {
+            "min": ABS_MIN_CURRENT_A,
+            "max": ABS_MAX_CURRENT_A,
+            "step": 1,
+            "mode": "box",
+            "unit_of_measurement": "A",
+        }
+    }
 
     fields: dict = {}
 
-    # Always required
-    fields[vol.Required(CONF_SOLAR_ENTITY)] = selector({"entity": {"domain": "sensor"}})
-
-    # Show only the grid fields for the chosen mode
-    if separate:
-        fields[vol.Required(CONF_GRID_IMPORT_ENTITY)] = selector({"entity": {"domain": "sensor"}})
-        fields[vol.Required(CONF_GRID_EXPORT_ENTITY)] = selector({"entity": {"domain": "sensor"}})
+    # Grid sensors should NOT be filtered by wallbox device (they often live on the energy meter)
+    if grid_single:
+        fields[vol.Required(CONF_GRID_POWER, default=defaults.get(CONF_GRID_POWER, ""))] = selector(
+            {"entity": {"domain": "sensor"}}
+        )
     else:
-        fields[vol.Required(CONF_GRID_ENTITY)] = selector({"entity": {"domain": "sensor"}})
+        fields[vol.Required(CONF_GRID_IMPORT, default=defaults.get(CONF_GRID_IMPORT, ""))] = selector(
+            {"entity": {"domain": "sensor"}}
+        )
+        fields[vol.Required(CONF_GRID_EXPORT, default=defaults.get(CONF_GRID_EXPORT, ""))] = selector(
+            {"entity": {"domain": "sensor"}}
+        )
 
-    # Remaining required inputs
-    fields[vol.Required(CONF_DEVICE_ENTITY)] = selector({"entity": {"domain": "sensor"}})
-    fields[vol.Required(CONF_STATUS_ENTITY)] = selector(entity_selector_any)
-    fields[vol.Required(CONF_STATUS_STRING)] = str
-    fields[vol.Required(CONF_RESET_ENTITY)] = selector(entity_selector_any)
-    fields[vol.Required(CONF_RESET_STRING)] = str
+    def add_ent(key: str, domain: str, filterable: bool = True):
+        ent_selector: Dict = {"entity": {"domain": domain}}
+        if selected_device and filterable and (filter_keys is None or key in filter_keys):
+            ent_selector["entity"]["device"] = selected_device
+        fields[vol.Required(key, default=defaults.get(key, ""))] = selector(ent_selector)
 
-    # Scan interval
-    fields[vol.Required(CONF_SCAN_INTERVAL, default=0)] = selector(
+    # Wallbox-related (filtered if device selected)
+    add_ent(CONF_CHARGE_POWER, "sensor", filterable=True)
+    add_ent(CONF_WALLBOX_STATUS, "sensor", filterable=True)
+    add_ent(CONF_CABLE_CONNECTED, "binary_sensor", filterable=True)
+    add_ent(CONF_CHARGING_ENABLE, "switch", filterable=True)
+    add_ent(CONF_LOCK_SENSOR, "lock", filterable=True)
+    add_ent(CONF_CURRENT_SETTING, "number", filterable=True)
+
+    # EV SOC may be from a different integration/device → do NOT filter by selected device
+    evsoc_default = defaults.get(CONF_EV_BATTERY_LEVEL, "")
+    if evsoc_default:
+        fields[vol.Optional(CONF_EV_BATTERY_LEVEL, default=evsoc_default)] = selector(
+            {"entity": {"domain": "sensor"}}
+        )
+    else:
+        fields[vol.Optional(CONF_EV_BATTERY_LEVEL)] = selector({"entity": {"domain": "sensor"}})
+
+    fields[vol.Required(CONF_MAX_CURRENT_LIMIT_A, default=defaults.get(CONF_MAX_CURRENT_LIMIT_A, 16))] = selector(num_sel_a)
+
+    fields[vol.Required(CONF_ECO_ON_UPPER, default=defaults.get(CONF_ECO_ON_UPPER, DEFAULT_ECO_ON_UPPER))] = selector(num_sel_w)
+    fields[vol.Required(CONF_ECO_ON_LOWER, default=defaults.get(CONF_ECO_ON_LOWER, DEFAULT_ECO_ON_LOWER))] = selector(num_sel_w)
+    fields[vol.Required(CONF_ECO_OFF_UPPER, default=defaults.get(CONF_ECO_OFF_UPPER, DEFAULT_ECO_OFF_UPPER))] = selector(num_sel_w)
+    fields[vol.Required(CONF_ECO_OFF_LOWER, default=defaults.get(CONF_ECO_OFF_LOWER, DEFAULT_ECO_OFF_LOWER))] = selector(num_sel_w)
+
+    fields[vol.Required(CONF_SCAN_INTERVAL, default=defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))] = selector(
         {
             "number": {
-                "min": 0,
-                "max": 86400,
+                "min": MIN_SCAN_INTERVAL,
+                "max": 3600,
                 "step": 1,
                 "mode": "box",
                 "unit_of_measurement": "s",
             }
         }
     )
+    fields[vol.Required(CONF_SUSTAIN_SECONDS, default=defaults.get(CONF_SUSTAIN_SECONDS, DEFAULT_SUSTAIN_SECONDS))] = selector(num_sel_s)
 
     return vol.Schema(fields)
 
 
-# Options Flow (two steps: grid mode, then details)
+def _get_reg_entry(hass, entity_id: str):
+    try:
+        ent_reg = er.async_get(hass)
+        return ent_reg.async_get(entity_id)
+    except Exception:
+        return None
+
+
+def _get_registry_name(hass, entity_id: str) -> str:
+    try:
+        e = _get_reg_entry(hass, entity_id)
+        if e:
+            return (e.original_name or e.original_device_class or e.unique_id or e.entity_id) or entity_id
+    except Exception:
+        pass
+    return entity_id
+
+
+def _find_device_candidates(hass, device_id: str, domain: str) -> list[str]:
+    """Return entity_ids for a device filtered by domain, only enabled entries."""
+    if not device_id:
+        return []
+    ent_reg = er.async_get(hass)
+    out: list[str] = []
+    for entry in ent_reg.entities.values():
+        try:
+            if entry.device_id != device_id:
+                continue
+            # Skip disabled entities
+            if getattr(entry, "disabled_by", None) is not None:
+                continue
+            # Match domain (RegistryEntry may or may not have .domain across HA versions)
+            edomain = getattr(entry, "domain", None) or entry.entity_id.split(".", 1)[0]
+            if edomain != domain:
+                continue
+            out.append(entry.entity_id)
+        except Exception:
+            continue
+    return out
+
+
+def _prefer_by_keywords(hass, candidates: List[str], include_any: List[str], bonus_any: Optional[List[str]] = None,
+                        exclude_any: Optional[List[str]] = None) -> Tuple[List[str], Dict[str, int]]:
+    """Rank candidates by keyword occurrence in entity_id or registry name.
+    Return (best_ties, score_map)."""
+    if not candidates:
+        return [], {}
+    bonus_any = bonus_any or []
+    exclude_any = exclude_any or []
+    score_map: Dict[str, int] = {}
+    for eid in candidates:
+        name = f"{eid}|{_get_registry_name(hass, eid)}".lower()
+        score = 0
+        for kw in include_any:
+            if kw in name:
+                score += 3
+        for kw in bonus_any:
+            if kw in name:
+                score += 1
+        for kw in exclude_any:
+            if kw in name:
+                score -= 3
+        score_map[eid] = score
+    if not score_map:
+        return candidates, {}
+    max_score = max(score_map.values())
+    best = [eid for eid, sc in score_map.items() if sc == max_score]
+    return (best if max_score > 0 else candidates), score_map
+
+
+def _score_charge_power(hass, eid: str) -> int:
+    """Heuristic score for selecting the best 'charge power' sensor on a device."""
+    score = 0
+    st: Optional[State] = None
+    try:
+        st = hass.states.get(eid)
+    except Exception:
+        st = None
+
+    # Registry hints
+    reg = _get_reg_entry(hass, eid)
+    reg_dc = getattr(reg, "original_device_class", None) if reg else None
+
+    # Device class preference
+    dc = st.attributes.get("device_class") if st else None
+    if dc == "power" or reg_dc == "power":
+        score += 8
+
+    # Unit preference
+    unit = st.attributes.get("unit_of_measurement") if st else None
+    if unit in ("W", "kW"):
+        score += 6
+    if unit in ("kWh",):
+        score -= 6  # energy, not power
+
+    # State class: measurement vs totals
+    sclass = st.attributes.get("state_class") if st else None
+    if sclass == "measurement":
+        score += 4
+    if sclass and sclass.startswith("total"):
+        score -= 6
+
+    name = f"{eid}|{_get_registry_name(hass, eid)}".lower()
+
+    # Positive keywords
+    for kw, pts in [
+        ("charge_power", 8),
+        ("charging_power", 8),
+        ("charger_power", 6),
+        ("evse_power", 6),
+        ("ev_power", 5),
+        ("wallbox_power", 5),
+        ("power", 2),
+        ("charge", 2),
+        ("charging", 2),
+        ("ev", 1),
+        ("wallbox", 1),
+        ("charger", 1),
+    ]:
+        if kw in name:
+            score += pts
+
+    # Negative keywords (not the charger power)
+    for kw, pts in [
+        ("grid", -6),
+        ("import", -6),
+        ("export", -6),
+        ("solar", -6),
+        ("pv", -6),
+        ("home", -4),
+        ("house", -4),
+        ("total", -4),
+        ("sum", -4),
+        ("accumulated", -4),
+        ("energy", -6),
+        ("session_energy", -8),
+        ("l1", -3),
+        ("l2", -3),
+        ("l3", -3),
+        ("phase", -3),
+    ]:
+        if kw in name:
+            score += pts
+
+    return score
+
+
+def _select_single_charge_power(hass, candidates: List[str]) -> Optional[str]:
+    """Return a single best candidate for charge power, or None if ambiguous."""
+    if not candidates:
+        return None
+    scored = [(eid, _score_charge_power(hass, eid)) for eid in candidates]
+    # Find unique highest
+    scored.sort(key=lambda x: x[1], reverse=True)
+    if not scored:
+        return None
+    top_eid, top_score = scored[0]
+    # If multiple share top score, ambiguous
+    ties = [eid for eid, sc in scored if sc == top_score]
+    if top_score <= 0:
+        return None
+    if len(ties) == 1:
+        return top_eid
+    return None
+
+
+def _refine_candidates_for_key(hass, candidates: List[str], key: str) -> List[str]:
+    """Refine candidates using state attributes and keyword heuristics per key."""
+    if not candidates:
+        return []
+    refined = list(candidates)
+
+    if key == CONF_CHARGE_POWER:
+        # If we can pick a unique best, return it directly
+        pick = _select_single_charge_power(hass, refined)
+        if pick:
+            return [pick]
+
+        # Otherwise narrow down:
+        # 1) Prefer sensors with device_class power or unit W/kW
+        power_like = []
+        for eid in refined:
+            st = hass.states.get(eid)
+            if not st:
+                continue
+            unit = st.attributes.get("unit_of_measurement")
+            dc = st.attributes.get("device_class")
+            if (dc == "power") or (unit in ("W", "kW")):
+                power_like.append(eid)
+        if len(power_like) == 1:
+            return power_like
+        if len(power_like) > 1:
+            refined = power_like
+
+        # 2) Avoid totals/energy
+        measurement_like = []
+        for eid in refined:
+            st = hass.states.get(eid)
+            if not st:
+                continue
+            sclass = st.attributes.get("state_class")
+            unit = st.attributes.get("unit_of_measurement")
+            if sclass == "measurement" and unit in ("W", "kW"):
+                measurement_like.append(eid)
+        if len(measurement_like) == 1:
+            return measurement_like
+        if len(measurement_like) > 1:
+            refined = measurement_like
+
+        # 3) Prefer keywords; penalize grid/solar/pv/etc.
+        refined, _ = _prefer_by_keywords(
+            hass,
+            refined,
+            include_any=["charge_power", "charging_power", "charger_power", "evse_power", "ev_power", "wallbox_power", "power"],
+            bonus_any=["charge", "charging", "ev", "wallbox", "charger"],
+            exclude_any=["grid", "import", "export", "solar", "pv", "home", "house", "total", "sum", "accumulated", "energy", "session_energy", "l1", "l2", "l3", "phase"],
+        )
+        return refined
+
+    if key == CONF_WALLBOX_STATUS:
+        # Prefer enum-like sensors (device_class enum) if available
+        enum_like = []
+        for eid in refined:
+            st = hass.states.get(eid)
+            if not st:
+                continue
+            if st.attributes.get("device_class") in ("enum", "timestamp"):
+                enum_like.append(eid)
+        if len(enum_like) == 1:
+            return enum_like
+        if len(enum_like) > 1:
+            refined = enum_like
+        # Keyword preference: 'status', 'charging_status', 'state'
+        refined, _ = _prefer_by_keywords(
+            hass,
+            refined,
+            include_any=["status", "charging_status", "ev_status", "wallbox_status", "state"],
+            bonus_any=["charge", "charging", "ev", "wallbox"],
+        )
+        only_status = [eid for eid in refined if "status" in (eid.lower() + "|" + _get_registry_name(hass, eid).lower())]
+        if len(only_status) == 1:
+            return only_status
+        return refined
+
+    # Other keys: leave as-is
+    return refined
+
+
+def _autofill_from_device(hass, defaults: dict, device_id: Optional[str]) -> None:
+    """Prefill defaults for filterable keys when a single best candidate is found on the selected device."""
+    if not device_id:
+        return
+    for key, domain in KEY_DOMAIN_MAP.items():
+        # Do not override if already provided/non-empty
+        if defaults.get(key):
+            continue
+        candidates = _find_device_candidates(hass, device_id, domain)
+        if not candidates:
+            continue
+        # Refine based on heuristics
+        refined = _refine_candidates_for_key(hass, candidates, key)
+        # If refinement yields a single candidate, use it
+        if len(refined) == 1:
+            defaults[key] = refined[0]
+            _LOGGER.debug("Auto-filled %s with %s (from %d candidates)", key, refined[0], len(candidates))
+        else:
+            _LOGGER.debug(
+                "Did not auto-fill %s: %d candidates on device, %d after refine (ambiguous)",
+                key, len(candidates), len(refined)
+            )
+
+
+class EVChargeManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    VERSION = 1
+
+    def __init__(self) -> None:
+        self._step1: dict | None = None
+        self._s_defaults: dict | None = None
+        self._selected_device: Optional[str] = None
+
+    async def async_step_user(self, user_input=None):
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_NAME, default=""): str,
+                vol.Required(CONF_GRID_SINGLE, default=False): selector({"boolean": {}}),
+                vol.Required(CONF_SUPPLY_PROFILE, default="eu_1ph_230"): selector({
+                    "select": {
+                        "options": [
+                            {"value": key, "label": meta["label"]}
+                            for key, meta in SUPPLY_PROFILES.items()
+                        ]
+                    }
+                }),
+            }
+        )
+        if user_input is None:
+            return self.async_show_form(step_id="user", data_schema=schema)
+
+        self._step1 = {
+            CONF_NAME: (user_input.get(CONF_NAME) or "").strip(),
+            CONF_GRID_SINGLE: bool(user_input.get(CONF_GRID_SINGLE, False)),
+            CONF_SUPPLY_PROFILE: user_input.get(CONF_SUPPLY_PROFILE, "eu_1ph_230"),
+        }
+        self._s_defaults = {
+            CONF_GRID_POWER: "",
+            CONF_GRID_IMPORT: "",
+            CONF_GRID_EXPORT: "",
+            CONF_CHARGE_POWER: "",
+            CONF_WALLBOX_STATUS: "",
+            CONF_CABLE_CONNECTED: "",
+            CONF_CHARGING_ENABLE: "",
+            CONF_LOCK_SENSOR: "",
+            CONF_CURRENT_SETTING: "",
+            CONF_EV_BATTERY_LEVEL: "",
+            CONF_MAX_CURRENT_LIMIT_A: 16,
+            CONF_ECO_ON_UPPER: DEFAULT_ECO_ON_UPPER,
+            CONF_ECO_ON_LOWER: DEFAULT_ECO_ON_LOWER,
+            CONF_ECO_OFF_UPPER: DEFAULT_ECO_OFF_UPPER,
+            CONF_ECO_OFF_LOWER: DEFAULT_ECO_OFF_LOWER,
+            CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+            CONF_SUSTAIN_SECONDS: DEFAULT_SUSTAIN_SECONDS,
+        }
+        return await self.async_step_device()
+
+    async def async_step_device(self, user_input=None):
+        schema = vol.Schema({vol.Optional(CONF_DEVICE_ID, default=""): selector({"device": {}})})
+        if user_input is None:
+            return self.async_show_form(step_id="device", data_schema=schema)
+        device_id = (user_input.get(CONF_DEVICE_ID) or "").strip()
+        self._selected_device = device_id if device_id else None
+        return await self.async_step_sensors()
+
+    async def async_step_sensors(self, user_input=None):
+        assert self._step1 is not None
+        grid_single = bool(self._step1.get(CONF_GRID_SINGLE, False))
+        profile_key = self._step1.get(CONF_SUPPLY_PROFILE, "eu_1ph_230")
+        profile_meta = SUPPLY_PROFILES.get(profile_key, SUPPLY_PROFILES["eu_1ph_230"])
+        three_phase = bool(profile_meta.get("phases", 1) == 3)
+
+        if self._s_defaults is None:
+            self._s_defaults = {}
+
+        # Before showing the form: apply auto-prefill from selected device (only once or when empty values)
+        if user_input is None and self._selected_device:
+            _autofill_from_device(self.hass, self._s_defaults, self._selected_device)
+
+        if user_input is None:
+            # Build schema with filtering; fallback to unfiltered if HA version doesn't support device filter
+            try:
+                schema = _build_sensors_schema(grid_single, self._s_defaults, self._selected_device, FILTERABLE_KEYS)
+                return self.async_show_form(
+                    step_id="sensors",
+                    data_schema=schema,
+                    description_placeholders={"name": self._step1.get(CONF_NAME, "")},
+                )
+            except Exception as exc:
+                _LOGGER.warning("Device-filtered entity selector failed (%s); falling back to unfiltered.", exc)
+                schema = _build_sensors_schema(grid_single, self._s_defaults, None, FILTERABLE_KEYS)
+                return self.async_show_form(
+                    step_id="sensors",
+                    data_schema=schema,
+                    description_placeholders={"name": self._step1.get(CONF_NAME, "")},
+                )
+
+        for k, v in (user_input or {}).items():
+            self._s_defaults[k] = v
+
+        # Validate thresholds
+        thresh_data = {
+            CONF_ECO_ON_UPPER: self._s_defaults.get(CONF_ECO_ON_UPPER, DEFAULT_ECO_ON_UPPER),
+            CONF_ECO_ON_LOWER: self._s_defaults.get(CONF_ECO_ON_LOWER, DEFAULT_ECO_ON_LOWER),
+            CONF_ECO_OFF_UPPER: self._s_defaults.get(CONF_ECO_OFF_UPPER, DEFAULT_ECO_OFF_UPPER),
+            CONF_ECO_OFF_LOWER: self._s_defaults.get(CONF_ECO_OFF_LOWER, DEFAULT_ECO_OFF_LOWER),
+        }
+        errors = _validate_thresholds(thresh_data, three_phase)
+
+        # Scan interval
+        try:
+            si = int(self._s_defaults.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+            if si < MIN_SCAN_INTERVAL:
+                raise ValueError
+        except Exception:
+            errors[CONF_SCAN_INTERVAL] = "value_out_of_range"
+
+        # Sustain (min via constant)
+        try:
+            st = int(self._s_defaults.get(CONF_SUSTAIN_SECONDS, DEFAULT_SUSTAIN_SECONDS))
+            if st < SUSTAIN_MIN_SECONDS or st > SUSTAIN_MAX_SECONDS:
+                raise ValueError
+        except Exception:
+            errors[CONF_SUSTAIN_SECONDS] = "value_out_of_range"
+
+        # Max current
+        try:
+            max_a = int(self._s_defaults.get(CONF_MAX_CURRENT_LIMIT_A, 16))
+            if max_a < ABS_MIN_CURRENT_A or max_a > ABS_MAX_CURRENT_A:
+                raise ValueError
+        except Exception:
+            errors[CONF_MAX_CURRENT_LIMIT_A] = "value_out_of_range"
+
+        if errors:
+            # Re-apply auto-prefill for any still-empty fields (if device selected)
+            if self._selected_device:
+                _autofill_from_device(self.hass, self._s_defaults, self._selected_device)
+            # Try filtered schema first, then fallback
+            try:
+                schema = _build_sensors_schema(grid_single, self._s_defaults, self._selected_device, FILTERABLE_KEYS)
+            except Exception as exc:
+                _LOGGER.warning("Device-filtered entity selector failed (%s); falling back to unfiltered.", exc)
+                schema = _build_sensors_schema(grid_single, self._s_defaults, None, FILTERABLE_KEYS)
+            return self.async_show_form(
+                step_id="sensors",
+                data_schema=schema,
+                errors=errors,
+                description_placeholders={"name": self._step1.get(CONF_NAME, "")},
+            )
+
+        data = {**self._step1, **self._s_defaults}
+
+        if grid_single:
+            data.pop(CONF_GRID_IMPORT, None)
+            data.pop(CONF_GRID_EXPORT, None)
+        else:
+            data.pop(CONF_GRID_POWER, None)
+
+        # Legacy compat
+        data[CONF_WALLBOX_THREE_PHASE] = bool(profile_meta.get("phases", 1) == 3)
+
+        if self._selected_device:
+            data[CONF_DEVICE_ID] = self._selected_device
+
+        title = self._step1.get(CONF_NAME) or "EVCM"
+        return self.async_create_entry(title=title, data=data)
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return EVChargeManagerOptionsFlow(config_entry)
+
+
 try:
-    OptionsFlowBase = config_entries.OptionsFlowWithConfigEntry  # type: ignore[attr-defined]
+    OptionsFlowBase = config_entries.OptionsFlowWithConfigEntry
 except AttributeError:
     OptionsFlowBase = config_entries.OptionsFlow
 
 
-class SolarDeltaOptionsFlowHandler(OptionsFlowBase):
-    """Options flow (name immutable)."""
+class EVChargeManagerOptionsFlow(OptionsFlowBase):
+    VERSION = 1
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         try:
-            super().__init__(config_entry)  # type: ignore[misc]
+            super().__init__(config_entry)
         except TypeError:
             super().__init__()
-            # Older HA versions require storing it manually
-            self.config_entry = config_entry  # noqa: SLF001
-        self._grid_separate: bool | None = None
+            self.config_entry = config_entry
+        self._grid_single: bool | None = None
+        self._supply_profile: str | None = None
+        self._values: dict | None = None
+        self._selected_device: Optional[str] = None
 
     async def async_step_init(self, user_input=None):
-        """Step 1: choose grid mode; show current mode and sensors."""
-        if user_input is None:
-            current_sep = self._get_current_separate()
-
-            # Current configured sensors for info text
-            get_opt = self.config_entry.options.get
-            get_dat = self.config_entry.data.get
-            cur_grid = get_opt(CONF_GRID_ENTITY) or get_dat(CONF_GRID_ENTITY)
-            cur_import = get_opt(CONF_GRID_IMPORT_ENTITY) or get_dat(CONF_GRID_IMPORT_ENTITY)
-            cur_export = get_opt(CONF_GRID_EXPORT_ENTITY) or get_dat(CONF_GRID_EXPORT_ENTITY)
-
-            grid_mode = (
-                "Separate grid import/export sensors" if current_sep else "Single net grid power sensor"
-            )
-            if current_sep:
-                grid_detail = (
-                    f"Import power sensor: {cur_import or '(not set)'}\n"
-                    f"Export power sensor: {cur_export or '(not set)'}"
-                )
-            else:
-                grid_detail = f"Grid power sensor: {cur_grid or '(not set)'}"
-
-            schema = vol.Schema(
-                {vol.Required(CONF_GRID_SEPARATE, default=current_sep): selector({"boolean": {}})}
-            )
-            entry_name = (
-                self.config_entry.options.get(CONF_NAME)
-                or self.config_entry.data.get(CONF_NAME)
-                or self.config_entry.title
-                or "SolarDelta"
-            )
-            return self.async_show_form(
-                step_id="init",
-                data_schema=schema,
-                description_placeholders={
-                    "entry_name": entry_name,
-                    "grid_mode": grid_mode,
-                    "grid_detail": grid_detail,
-                },
-            )
-
-        self._grid_separate = bool(user_input.get(CONF_GRID_SEPARATE, False))
-        return await self.async_step_details()
-
-    async def async_step_details(self, user_input=None):
-        """Step 2: details; show only relevant grid fields."""
-        separate = (
-            self._grid_separate
-            if self._grid_separate is not None
-            else self._get_current_separate()
-        )
-
-        schema = self._build_schema(separate)
-
-        entry_name = (
-            self.config_entry.options.get(CONF_NAME)
-            or self.config_entry.data.get(CONF_NAME)
-            or self.config_entry.title
-            or "SolarDelta"
-        )
-
-        if user_input is None:
-            return self.async_show_form(
-                step_id="details",
-                data_schema=schema,
-                description_placeholders={"entry_name": entry_name},
-            )
-
-        # Validate according to mode
-        errors: dict[str, str] = {}
-        if separate:
-            if not user_input.get(CONF_GRID_IMPORT_ENTITY):
-                errors[CONF_GRID_IMPORT_ENTITY] = "required_if_separate"
-            if not user_input.get(CONF_GRID_EXPORT_ENTITY):
-                errors[CONF_GRID_EXPORT_ENTITY] = "required_if_separate"
-        else:
-            if not user_input.get(CONF_GRID_ENTITY):
-                errors[CONF_GRID_ENTITY] = "required_if_not_separate"
-
-        # Required fields
-        required_keys = [
-            CONF_SOLAR_ENTITY,
-            CONF_DEVICE_ENTITY,
-            CONF_STATUS_ENTITY,
-            CONF_STATUS_STRING,
-            CONF_RESET_ENTITY,
-            CONF_RESET_STRING,
-        ]
-        for k in required_keys:
-            if not user_input.get(k):
-                errors[k] = "required"
-
-        if errors:
-            return self.async_show_form(
-                step_id="details",
-                data_schema=schema,
-                errors=errors,
-                description_placeholders={"entry_name": entry_name},
-            )
-
-        # Merge with existing options so hidden values (from the other mode) are preserved
-        result = dict(self.config_entry.options)
-        result[CONF_GRID_SEPARATE] = separate
-        for k, v in user_input.items():
-            result[k] = v
-
-        return self.async_create_entry(title="", data=result)
-
-    def _get_current_separate(self) -> bool:
-        get_opt = self.config_entry.options.get
-        get_dat = self.config_entry.data.get
-        val = get_opt(CONF_GRID_SEPARATE)
-        if val is None:
-            val = get_dat(CONF_GRID_SEPARATE)
-        return bool(val or False)
-
-    def _build_schema(self, separate: bool) -> vol.Schema:
-        """Options details schema with defaults populated from current config/opts."""
-        get_opt = self.config_entry.options.get
-        get_dat = self.config_entry.data.get
-
-        cur_solar = get_opt(CONF_SOLAR_ENTITY) or get_dat(CONF_SOLAR_ENTITY)
-
-        cur_grid = get_opt(CONF_GRID_ENTITY) or get_dat(CONF_GRID_ENTITY)
-        cur_import = get_opt(CONF_GRID_IMPORT_ENTITY) or get_dat(CONF_GRID_IMPORT_ENTITY)
-        cur_export = get_opt(CONF_GRID_EXPORT_ENTITY) or get_dat(CONF_GRID_EXPORT_ENTITY)
-
-        cur_device = get_opt(CONF_DEVICE_ENTITY) or get_dat(CONF_DEVICE_ENTITY)
-
-        cur_status_entity = get_opt(CONF_STATUS_ENTITY) or get_dat(CONF_STATUS_ENTITY)
-        cur_status_string = get_opt(CONF_STATUS_STRING) or get_dat(CONF_STATUS_STRING) or ""
-
-        cur_reset_entity = get_opt(CONF_RESET_ENTITY) or get_dat(CONF_RESET_ENTITY)
-        cur_reset_string = get_opt(CONF_RESET_STRING) or get_dat(CONF_RESET_STRING) or ""
-
-        cur_scan = get_opt(CONF_SCAN_INTERVAL)
-        if cur_scan is None:
-            cur_scan = get_dat(CONF_SCAN_INTERVAL)
-        if cur_scan is None:
-            cur_scan = 0
-
-        entity_selector_any = {"entity": {"domain": ["sensor", "binary_sensor"]}}
-
-        fields: dict = {}
-
-        # Solar
-        if cur_solar is not None:
-            fields[vol.Required(CONF_SOLAR_ENTITY, default=cur_solar)] = selector(
-                {"entity": {"domain": "sensor"}}
-            )
-        else:
-            fields[vol.Required(CONF_SOLAR_ENTITY)] = selector(
-                {"entity": {"domain": "sensor"}}
-            )
-
-        # Grid (only the active mode’s fields)
-        if separate:
-            if cur_import is not None:
-                fields[
-                    vol.Required(CONF_GRID_IMPORT_ENTITY, default=cur_import)
-                ] = selector({"entity": {"domain": "sensor"}})
-            else:
-                fields[vol.Required(CONF_GRID_IMPORT_ENTITY)] = selector(
-                    {"entity": {"domain": "sensor"}}
-                )
-
-            if cur_export is not None:
-                fields[
-                    vol.Required(CONF_GRID_EXPORT_ENTITY, default=cur_export)
-                ] = selector({"entity": {"domain": "sensor"}})
-            else:
-                fields[vol.Required(CONF_GRID_EXPORT_ENTITY)] = selector(
-                    {"entity": {"domain": "sensor"}}
-                )
-        else:
-            if cur_grid is not None:
-                fields[vol.Required(CONF_GRID_ENTITY, default=cur_grid)] = selector(
-                    {"entity": {"domain": "sensor"}}
-                )
-            else:
-                fields[vol.Required(CONF_GRID_ENTITY)] = selector(
-                    {"entity": {"domain": "sensor"}}
-                )
-
-        # Device
-        if cur_device is not None:
-            fields[vol.Required(CONF_DEVICE_ENTITY, default=cur_device)] = selector(
-                {"entity": {"domain": "sensor"}}
-            )
-        else:
-            fields[vol.Required(CONF_DEVICE_ENTITY)] = selector(
-                {"entity": {"domain": "sensor"}}
-            )
-
-        # Status
-        if cur_status_entity is not None:
-            fields[
-                vol.Required(CONF_STATUS_ENTITY, default=cur_status_entity)
-            ] = selector(entity_selector_any)
-        else:
-            fields[vol.Required(CONF_STATUS_ENTITY)] = selector(entity_selector_any)
-
-        fields[vol.Required(CONF_STATUS_STRING, default=cur_status_string)] = str
-
-        # Reset
-        if cur_reset_entity is not None:
-            fields[
-                vol.Required(CONF_RESET_ENTITY, default=cur_reset_entity)
-            ] = selector(entity_selector_any)
-        else:
-            fields[vol.Required(CONF_RESET_ENTITY)] = selector(entity_selector_any)
-
-        fields[vol.Required(CONF_RESET_STRING, default=cur_reset_string)] = str
-
-        # Scan interval
-        fields[vol.Required(CONF_SCAN_INTERVAL, default=cur_scan)] = selector(
+        eff = _merged(self.config_entry)
+        current_single = bool(eff.get(CONF_GRID_SINGLE, False))
+        current_profile = eff.get(CONF_SUPPLY_PROFILE, "eu_1ph_230")
+        schema = vol.Schema(
             {
-                "number": {
-                    "min": 0,
-                    "max": 86400,
-                    "step": 1,
-                    "mode": "box",
-                    "unit_of_measurement": "s",
-                }
+                vol.Required(CONF_GRID_SINGLE, default=current_single): selector({"boolean": {}}),
+                vol.Required(CONF_SUPPLY_PROFILE, default=current_profile): selector({
+                    "select": {
+                        "options": [
+                            {"value": key, "label": meta["label"]}
+                            for key, meta in SUPPLY_PROFILES.items()
+                        ]
+                    }
+                }),
             }
         )
+        name = eff.get(CONF_NAME) or self.config_entry.title or "EVCM"
+        if user_input is None:
+            return self.async_show_form(step_id="init", data_schema=schema, description_placeholders={"name": name})
+        self._grid_single = bool(user_input.get(CONF_GRID_SINGLE, current_single))
+        self._supply_profile = user_input.get(CONF_SUPPLY_PROFILE, current_profile)
+        return await self.async_step_device()
 
-        return vol.Schema(fields)
+    async def async_step_device(self, user_input=None):
+        eff = _merged(self.config_entry)
+        existing_device = eff.get(CONF_DEVICE_ID, "")
+        schema = vol.Schema(
+            {vol.Optional(CONF_DEVICE_ID, default=existing_device): selector({"device": {}})}
+        )
+        name = eff.get(CONF_NAME) or self.config_entry.title or "EVCM"
+        if user_input is None:
+            return self.async_show_form(step_id="device", data_schema=schema, description_placeholders={"name": name})
+        device_id = (user_input.get(CONF_DEVICE_ID) or "").strip()
+        self._selected_device = device_id if device_id else None
+        return await self.async_step_sensors()
+
+    async def async_step_sensors(self, user_input=None):
+        eff = _merged(self.config_entry)
+        grid_single = self._grid_single if self._grid_single is not None else bool(eff.get(CONF_GRID_SINGLE, False))
+        profile_key = self._supply_profile if self._supply_profile is not None else eff.get(CONF_SUPPLY_PROFILE, "eu_1ph_230")
+        profile_meta = SUPPLY_PROFILES.get(profile_key, SUPPLY_PROFILES["eu_1ph_230"])
+        three_phase = bool(profile_meta.get("phases", 1) == 3)
+
+        if self._values is None:
+            self._values = {
+                CONF_GRID_POWER: eff.get(CONF_GRID_POWER, ""),
+                CONF_GRID_IMPORT: eff.get(CONF_GRID_IMPORT, ""),
+                CONF_GRID_EXPORT: eff.get(CONF_GRID_EXPORT, ""),
+                CONF_CHARGE_POWER: eff.get(CONF_CHARGE_POWER, ""),
+                CONF_WALLBOX_STATUS: eff.get(CONF_WALLBOX_STATUS, ""),
+                CONF_CABLE_CONNECTED: eff.get(CONF_CABLE_CONNECTED, ""),
+                CONF_CHARGING_ENABLE: eff.get(CONF_CHARGING_ENABLE, ""),
+                CONF_LOCK_SENSOR: eff.get(CONF_LOCK_SENSOR, ""),
+                CONF_CURRENT_SETTING: eff.get(CONF_CURRENT_SETTING, ""),
+                CONF_EV_BATTERY_LEVEL: eff.get(CONF_EV_BATTERY_LEVEL, ""),
+                CONF_MAX_CURRENT_LIMIT_A: eff.get(CONF_MAX_CURRENT_LIMIT_A, 16),
+                CONF_ECO_ON_UPPER: eff.get(CONF_ECO_ON_UPPER, DEFAULT_ECO_ON_UPPER),
+                CONF_ECO_ON_LOWER: eff.get(CONF_ECO_ON_LOWER, DEFAULT_ECO_ON_LOWER),
+                CONF_ECO_OFF_UPPER: eff.get(CONF_ECO_OFF_UPPER, DEFAULT_ECO_OFF_UPPER),
+                CONF_ECO_OFF_LOWER: eff.get(CONF_ECO_OFF_LOWER, DEFAULT_ECO_OFF_LOWER),
+                CONF_SCAN_INTERVAL: eff.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                CONF_SUSTAIN_SECONDS: eff.get(CONF_SUSTAIN_SECONDS, DEFAULT_SUSTAIN_SECONDS),
+            }
+
+        # Before showing the form: apply auto-prefill from selected device for empty fields
+        if user_input is None and self._selected_device:
+            _autofill_from_device(self.hass, self._values, self._selected_device)
+
+        if user_input is None:
+            try:
+                schema = _build_sensors_schema(grid_single, self._values, self._selected_device, FILTERABLE_KEYS)
+                name = eff.get(CONF_NAME) or self.config_entry.title or "EVCM"
+                return self.async_show_form(step_id="sensors", data_schema=schema, description_placeholders={"name": name})
+            except Exception as exc:
+                _LOGGER.warning("Device-filtered entity selector failed (%s); falling back to unfiltered.", exc)
+                schema = _build_sensors_schema(grid_single, self._values, None, FILTERABLE_KEYS)
+                name = eff.get(CONF_NAME) or self.config_entry.title or "EVCM"
+                return self.async_show_form(step_id="sensors", data_schema=schema, description_placeholders={"name": name})
+
+        for k, v in (user_input or {}).items():
+            self._values[k] = v
+
+        # Validate thresholds
+        thresh_data = {
+            CONF_ECO_ON_UPPER: self._values.get(CONF_ECO_ON_UPPER),
+            CONF_ECO_ON_LOWER: self._values.get(CONF_ECO_ON_LOWER),
+            CONF_ECO_OFF_UPPER: self._values.get(CONF_ECO_OFF_UPPER),
+            CONF_ECO_OFF_LOWER: self._values.get(CONF_ECO_OFF_LOWER),
+        }
+        errors = _validate_thresholds(thresh_data, three_phase)
+
+        # Validate scan interval
+        try:
+            si = int(self._values.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+            if si < MIN_SCAN_INTERVAL:
+                raise ValueError
+        except Exception:
+            errors[CONF_SCAN_INTERVAL] = "value_out_of_range"
+
+        # Validate sustain (min via constant)
+        try:
+            st = int(self._values.get(CONF_SUSTAIN_SECONDS, DEFAULT_SUSTAIN_SECONDS))
+            if st < SUSTAIN_MIN_SECONDS or st > SUSTAIN_MAX_SECONDS:
+                raise ValueError
+        except Exception:
+            errors[CONF_SUSTAIN_SECONDS] = "value_out_of_range"
+
+        # Max current
+        try:
+            max_a = int(self._values.get(CONF_MAX_CURRENT_LIMIT_A, 16))
+            if max_a < ABS_MIN_CURRENT_A or max_a > ABS_MAX_CURRENT_A:
+                raise ValueError
+        except Exception:
+            errors[CONF_MAX_CURRENT_LIMIT_A] = "value_out_of_range"
+
+        if errors:
+            # Re-apply auto-prefill for any still-empty fields (if device selected)
+            if self._selected_device:
+                _autofill_from_device(self.hass, self._values, self._selected_device)
+            try:
+                schema = _build_sensors_schema(grid_single, self._values, self._selected_device, FILTERABLE_KEYS)
+            except Exception as exc:
+                _LOGGER.warning("Device-filtered entity selector failed (%s); falling back to unfiltered.", exc)
+                schema = _build_sensors_schema(grid_single, self._values, None, FILTERABLE_KEYS)
+            name = eff.get(CONF_NAME) or self.config_entry.title or "EVCM"
+            return self.async_show_form(step_id="sensors", data_schema=schema, errors=errors, description_placeholders={"name": name})
+
+        new_opts = dict(self.config_entry.options)
+        new_opts[CONF_GRID_SINGLE] = bool(grid_single)
+
+        new_opts[CONF_SUPPLY_PROFILE] = profile_key
+        new_opts[CONF_WALLBOX_THREE_PHASE] = bool(profile_meta.get("phases", 1) == 3)
+
+        if self._selected_device:
+            new_opts[CONF_DEVICE_ID] = self._selected_device
+
+        for k, v in self._values.items():
+            new_opts[k] = v
+
+        return self.async_create_entry(title="", data=new_opts)
