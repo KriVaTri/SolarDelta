@@ -1,4 +1,4 @@
-# SolarDelta (beta)
+# SolarDelta
 
 [![GitHub release (latest SemVer including pre-releases)](https://img.shields.io/github/v/release/KriVaTri/solardelta?include_prereleases)](https://github.com/KriVaTri/solardelta/releases)
 
@@ -25,6 +25,24 @@ Highlights:
 
 Use cases:
 - Designed for solar coverage tracking (e.g., EV charging), but can be used for any device with measurable power draw.
+
+## Table of contents
+
+- [Highlights](#highlights)
+- [Use cases](#use-cases)
+- [Sensors created per entry](#sensors-created-per-entry)
+- [Configuration (via UI)](#configuration-via-ui)
+- [Behavior](#behavior)
+  - [Grid semantics](#grid-semantics)
+  - [Unknown/unavailable handling](#unknownunavailable-handling)
+- [Average sensors (persistent)](#average-sensors-persistent)
+  - [Active duration attributes (on each average sensor)](#active-duration-attributes-on-each-average-sensor)
+- [Services](#services)
+- [Changing settings later](#changing-settings-later)
+- [Installation](#installation)
+- [License](#license)
+
+---
 
 ## Sensors created per entry
 
