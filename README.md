@@ -32,8 +32,8 @@ Use cases:
 - [Use cases](#use-cases)
 - [Sensors created per entry](#sensors-created-per-entry)
 - [Configuration (via UI)](#configuration-via-ui)
-- [How it works](#how-it-works)
 - [Behavior](#behavior)
+  - [How it works](#how-it-works)
   - [Grid semantics](#grid-semantics)
   - [Unknown/unavailable handling](#unknownunavailable-handling)
 - [Average sensors (persistent)](#average-sensors-persistent)
@@ -91,15 +91,15 @@ Validation:
 - If separate grid sensors are enabled, both Import and Export sensors are required.
 - If disabled, the single net Grid sensor is required.
 
-## How it works
+## Behavior
+
+### How it works
 
 - When EV (or other device) power consumption is detected and the device status matches the predefined status string (optional), computing coverage and averages starts.
 - When EV power is 0W (or has a negative value), computing stops.
 - Push updates: listens to changes of Solar, Grid (net or separate), Device, Status, and Reset entities.
 - Optional polling: if scan interval > 0, it also recalculates on that schedule.
 - Session reset detection is immediate on Reset entity state changes, regardless of scan interval.
-
-## Behavior
 
 ### Grid semantics
 
