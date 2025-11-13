@@ -96,7 +96,7 @@ Validation:
 ### How it works
 
 - When EV (or other device) power consumption is detected and the device status matches the predefined status string (optional), computing coverage and averages starts.
-- When EV power is 0W (or has a negative value), computing stops.
+- When EV power is 0W (or has a negative value) or status string does not match, computing stops.
 - Push updates: listens to changes of Solar, Grid (net or separate), Device, Status, and Reset entities.
 - Optional polling: if scan interval > 0, it also recalculates on that schedule.
 - Session reset detection is immediate on Reset entity state changes, regardless of scan interval.
