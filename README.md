@@ -1,4 +1,15 @@
-# <img width="45" height="45" align="absmiddle" alt="logo" src="https://github.com/user-attachments/assets/31deb529-09e9-446e-97dd-0fe3f4c0ac74" /> SolarDelta
+<h1>
+  <table align="left" style="border:none; margin:0; padding:0;">
+    <tr style="border:none;">
+      <td style="border:none; padding-right:10px; vertical-align:middle;">
+        <img width="50" height="50" alt="logo" src="https://github.com/user-attachments/assets/31deb529-09e9-446e-97dd-0fe3f4c0ac74" />
+      </td>
+      <td style="border:none; vertical-align:middle; font-size:2em;">
+        SolarDelta
+      </td>
+    </tr>
+  </table>
+</h1>
 
 [![GitHub release (latest SemVer including pre-releases)](https://img.shields.io/github/v/release/KriVaTri/solardelta?include_prereleases)](https://github.com/KriVaTri/solardelta/releases)
 
