@@ -1,4 +1,7 @@
-# <img width="50" height="50" alt="logo" src="https://github.com/user-attachments/assets/31deb529-09e9-446e-97dd-0fe3f4c0ac74" /> SolarDelta
+<h1>
+  <img width="50" height="50" alt="logo" src="https://github.com/user-attachments/assets/31deb529-09e9-446e-97dd-0fe3f4c0ac74" style="vertical-align: middle; margin-top: -3px;" /> 
+  SolarDelta
+</h1>
 
 [![GitHub release (latest SemVer including pre-releases)](https://img.shields.io/github/v/release/KriVaTri/solardelta?include_prereleases)](https://github.com/KriVaTri/solardelta/releases)
 
